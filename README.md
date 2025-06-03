@@ -1,5 +1,6 @@
 # vax_frog
-##Expert system for weather forecasting from observations in the OPS5 production system language
+
+## Expert system for weather forecasting from observations in the OPS5 production system language
 
 See my [blog post](https://lardel.li/2024/03/first-encounter-with-ai.html) about this project for details.
 
