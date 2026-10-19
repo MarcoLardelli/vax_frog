@@ -35,4 +35,4 @@ The original spelling quirks ("Milibar", "Spetzielle", …) are also kept. All o
 - `TRANSCRIPTION_NOTES.md`
 - `run_with_cmu_ops5/` (the converter, the load script, a script that plays a sample session, and a recorded transcript)
 
-They're uncommitted, and I didn't touch your README. I also deleted the temporary `_ocr_tmp` folder. A natural next step would be updating the README line "Unfortunately I have only the printed version left" to point at the new source.
+
