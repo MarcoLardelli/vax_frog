@@ -1,0 +1,2582 @@
+;*************************************************************************
+;*                                                                       *
+;*                        VAXfrog-forecast                               *
+;*           ein wettervorhersagendes EXPERTENSYSTEM                     *
+;*************************************************************************
+; 6-7,86 marco lardelli. 4.E Kantonsschule Chur
+
+
+;(c):DIGITAL alle rechte vorbehalten
+;  wer dieses programm klaut, faelscht und in umlauf bringt ,oder
+;  ungerechtfertigterweise darueber spottet,wird mit debugging von
+;  unkommentierten basicprogrammen nicht unter 20k  bestraft.
+
+
+;                * * * * DEKLARATIONEN * * * *
+;                *                           *
+;                * * * * * * * * * * * * * * *
+
+(vector-attribute text ) ; damit auch laengere, mehrzeilige texte moeglich
+                         ; sind
+
+(LITERALIZE wetter
+        zeit            ;Zeitpunkt:1=(-12) 2=(-2) 3=gegenw. 4=(+2) 5=(+12)
+        zeit-sym        ;zeitpunkt in worten, fuer ausgabe
+        luftdruck       ;wetterattribute
+        ld
+        jahreszeit      ; (w)inter,(S)ommer oder (FH) =fruehling und herbst
+        windrichtung    ;die abkuerzungen repraesentieren die
+        wr              ;glaubwuerdigkeit des jeweiligen attributwertes
+        windstaerke     ;(schaetzung,unsichere messung,durchschnittl. wert,
+        ws              ; stoerung,nur kurze phase)
+        windzunahme           ; nur bei bedarf (morgen-mittag/mittag-abend)
+        wz
+        luftfeuchtigkeit
+        lf
+        morgentau       ;nur bei bedarf (erhoehen glaubwuerdigkeit bestimmter
+        mt              ;attribute,werden bei verdacht gefragt)
+        nebel
+        n
+        temperatur
+        t
+        wolkendichte
+        wd
+        wolkentyp
+        wt
+        regen
+        r
+        BundD                      ;abkuerzung fuer Blitz und Donner
+        bd
+        kondensstreifen  ;nur bei bedarf (siehe oben)
+        ks
+        wetterlage     ;wird von einer rule bestimmt (west,ost,nord,sud)
+        wl             ;bestimmtheit(anfangs 0, dann 100)
+)
+
+
+(literalize tendenz             ; von diesen wetterelementen wird eine
+        1-3-luftdruck           ; angabe ueber die entwicklung benoetigt
+        2-3-luftdruck           ; (zahlen = zeiten zwischen denen die differenz
+        1-3-windrichtung        ; gebildet wird )
+        1-3-temperatur          ;  wenn negativ:abnahme positiv:zunahme
+        2-3-wolkendichte
+)
+
+
+(literalize erklaer   ; enthalten Erklaerungstexte (je 1 pro prognose-rule)
+        rulenr          ; nummer der prognose-rule
+        text                ; Erklaerungstext
+)
+
+
+(literalize rcontr  ;verhindert mehrmaligen einsatz auf eine zeit
+        rulen          ;rulename
+        count          ;anzahl 'einsaetze'
+        basis          ;zeit von welcher beim ersten einsatz ausgegangen
+)                                                             ; wurde
+
+(literalize verdacht   ;seltener gebrauchte wetterdaten werden nicht gleich
+        time2          ;beim start abgefragt, sondern nur wenn es indizien
+        wetteratt      ;dafuer gibt,dass sie nuetzen koennen
+        wert                     ;wird von abfrageregel gefuellt
+        sicherheit               ;              "
+)
+
+(literalize next-rule  ;regelt abfolge bestimmter rules innerhalb einer
+                       ;gruppe, sowie abfolge der gruppenlosen rules
+        rtask                ;name der naechsten rule
+        status                ;soll sie folgen? (Ja oder Nein)
+        time                  ;parameter fuer nachfolgende rule
+        watt                  ;parameter        "
+)
+
+(literalize  next-group ;regelt abfolge der regelgruppen (durch REGENCY)
+        gtask               ;name der naechsten gruppe
+)
+
+(literalize frage
+        status             ;schon gefragt und korrekt  (g)=gefragt NIL=ungefr
+
+        attribut           ;frage nach welchem wetterelement
+        text               ; fragetext
+        max                ; maximum fuer eingabe (bei zahlen)
+        min                ; minimum   "     "      "
+        wert1                    ; abgefragter wert zeit 1
+        wert2                    ;      "       "    "  2
+        wert3                    ;      "       "    "  3
+        w1                       ; sicherheit von wert1
+        w2                       ;      "      "  wert2
+        w3                       ;      "      "  wert3
+)
+
+(literalize feuer ;enthalten die erklaerungen jeder feuernden rule
+        att       ;welche attribute sie veraendert plus erklaerungstext
+        time
+        text
+)
+
+
+;                        * * * * INITIALISIERUNG * * * *
+;                        * (^gtask=initialisieren)     *
+;                        * * * * * * * * * * * * * * * *
+
+(startup
+        (watch 0)      ;kein watch (nur fuer debugging)
+        (disable back) ;eigentlich schon default,aber der vollstaendigkeit
+                       ;halber aufgefuehrt
+        (strategy mea) ;erstes cond.-element ist group-controller
+        (make start)   ;elem.-class ohne attribute (nur fuer start)
+                       ; (disable halt) leider nicht moegl. da ops5 bei
+                       ; einer halt action dann gleich aussteigt
+        (run)          ; startet das programm
+)
+(p start
+         (start)
+         -->                   ; fragen welche gestelllt werden sollen
+         (remove 1 )
+         (make frage ^attribut luftdruck ^max 1050 ^min 950 ^w1 99 ^w2 99
+          ^w3 99 ^text |Geben sie den Luftdruck in Milibar (950-1050) ein: | )
+         (make frage ^attribut jahreszeit
+         ^text |Jahreszeit? (ein Wert:W,S oder FH fuer Fruehl. & Herbst): | )
+         (make frage ^attribut windrichtung ^max 360 ^min 0 ^w1 99 ^w2 99 ^w3
+         99 ^text |Geben sie die Windrichtung ein (0=N,90=O,180=S,270=W): | )
+         (make frage ^attribut windstaerke ^max 12 ^min 0 ^w1 99 ^w2 99 ^w3
+         99 ^text |Geben sie die Windstaerke ein (Beaufort-skala, 1-12) :| )
+         (make frage ^attribut luftfeuchtigkeit ^max 100 ^min 0 ^w1 99
+         ^w2 99 ^w3 99 ^text |Geben sie die Luftfeuchtigkeit ein (in %) : | )
+         (make frage ^attribut nebel ^max 50 ^min 0 ^w1 99 ^w2 99 ^w3 99
+     ^text |Hat es Nebel ? Menge? (0-50, 0=keinen 10=Morgennebel 40=suppe)| )
+         (make frage ^attribut temperatur ^max 50 ^min -50 ^w1 99 ^w2 99
+         ^w3 99 ^text |Lufttemperatur ? (Celsius,-50 bis 50 ): | )
+
+
+         (make frage ^attribut wolkendichte ^max 6 ^min 0 ^w1 99 ^w2 99 ^w3 99
+         ^text |Wolkendichte? (1-6 ,0=wolkenlos 3=halb- 6=ganz bedeckt):| )
+         (make frage ^attribut wolkentyp   ^w1 99 ^w2 99 ^w3 99
+   ^text |Dominierender Wolkentyp? (st,sc,cu,cb,ns,as,ac,ci,cc,cs,(k)eine)|    )
+         (make frage ^attribut regen ^max 50 ^min 0 ^w1 99 ^w2 99 ^w3 99
+         ^text |Hat es Regen? Menge? (1-50,0=keinen 50=in Stroemen):| )
+                          ;jede rule hat ihr wm ,welches kontrolliert ,dass
+                          ;sie nicht zweimal ins gleiche ziel schiesst
+         (make rcontr ^rulen 1-3-ld ^count 0 )
+         (make rcontr ^rulen 2-3-ld ^count 0 )
+         (make rcontr ^rulen 1-3-wr ^count 0 )
+         (make rcontr ^rulen 1-3-t ^count 0 )
+         (make rcontr ^rulen 2-3-wd ^count 0 )
+         (make rcontr ^rulen tied-ld ^count 0 )
+         (make rcontr ^rulen stratus ^count 0 )
+         (make rcontr ^rulen stratocum-g ^count 0 )
+         (make rcontr ^rulen stratocum-k ^count 0 )
+         (make rcontr ^rulen cumulus-k ^count 0 )
+         (make rcontr ^rulen cumulus-g ^count 0 )
+         (make rcontr ^rulen cumulonimb-nr ^count 0 )
+         (make rcontr ^rulen cumulonimb-sr ^count 0 )
+         (make rcontr ^rulen cirrus ^count 0 )
+         (make rcontr ^rulen cirrocum ^count 0 )
+         (make rcontr ^rulen altocum-vd ^count 0 )
+         (make rcontr ^rulen altostratus ^count 0 )
+         (make rcontr ^rulen nimbostratus ^count 0 )
+         (make rcontr ^rulen nimbostratus2 ^count 0 )
+         (make rcontr ^rulen s-gewitter ^count 0 )
+         (make rcontr ^rulen starfal-ld ^count 0 )
+         (make rcontr ^rulen gleich-hoch-ld ^count 0 )
+         (make rcontr ^rulen stetig-steigend-ld ^count 0 )
+         (make rcontr ^rulen lngs-stetig-steig-ld ^count 0 )
+         (make rcontr ^rulen fallend-luftdruck ^count 0 )
+         (make rcontr ^rulen h-lufdd-impl ^count 0 )
+         (make rcontr ^rulen t-luftdd-impl ^count 0 )
+         (make rcontr ^rulen zunah-wd ^count 0 )
+         (make rcontr ^rulen abnah-wd ^count 0 )
+         (make rcontr ^rulen winddre-w ^count 0 )
+         (make rcontr ^rulen wizu-momi-vd ^count 0 )
+         (make rcontr ^rulen wind-miab-vd ^count 0 )
+         (make rcontr ^rulen hartn-nebel ^count 0 )
+         (make rcontr ^rulen morgen-nebel ^count 0 )
+         (make rcontr ^rulen luftfeuchte ^count 0 )
+         (make rcontr ^rulen ueber-100% ^count 0 )
+         (make rcontr ^rulen sued-wl ^count 0 )
+         (make rcontr ^rulen nord-wl ^count 0 )
+         (make rcontr ^rulen west-wl ^count 0 )
+         (make rcontr ^rulen hd-wl-s ^count 0 )
+         (make rcontr ^rulen hd-wl-w ^count 0 )
+         (make rcontr ^rulen fl-df-wl ^count 0 )
+         (make rcontr ^rulen tiefd-vd ^count 0 )
+         (make rcontr ^rulen tiefd-vd-b ^count 0 )
+         (make rcontr ^rulen st-tau-vd ^count 0 )
+         (make rcontr ^rulen reg-vorhs ^count 0 )
+         (make rcontr ^rulen kreg-vorhs ^count 0 )
+         (make rcontr ^rulen reg-vorhs-w ^count 0 )
+         (make rcontr ^rulen wind-vorhs ^count 0 )
+         (make rcontr ^rulen wind-vorhs-w ^count 0 )
+         (make rcontr ^rulen windstaerke ^count 0 )
+         (make rcontr ^rulen windstaerke2 ^count 0 )
+         (make rcontr ^rulen tmp-vorhs ^count 0 )
+         (make rcontr ^rulen tmp-vorhs-w ^count 0 )
+         (make rcontr ^rulen wold/t-vorhs ^count 0 )
+         (make rcontr ^rulen schnee-vorhs ^count 0 )
+         (make rcontr ^rulen nebel-vorhs-w ^count 0 )
+         (make rcontr ^rulen knebel-vorhs ^count 0 )
+         (make rcontr ^rulen wettlage-vorhs ^count 0 )
+         (make rcontr ^rulen tmp-vorhs-wk ^count 0 )
+         (make rcontr ^rulen indicator ^count 1 )     ;^count nur Zaehler
+         (make rcontr ^rulen ci/cs-langfristig ^count 0 )
+
+                                                   ; allgemeine erklaerungstexte
+        (make erklaer ^rulenr 1 ^text
+ |Stratus-Wolken grosser Dichte=evtl. Spruehregen.| )
+        (make erklaer ^rulenr 2 ^text
+ |Wenn Stratocumulus gleichmaessige graue Schicht=Regen.| )
+        (make erklaer ^rulenr 3 ^text
+ |Stratocumulus kleiner Dichte=kein Regen zu erwarten.| )
+        (make erklaer ^rulenr 4 ^text
+ |Cumulus kleiner Dichte=Schoenwetter,Wind=rechtsdrehend in Boeen.| )
+        (make erklaer ^rulenr 5 ^text
+ |Grosse Cumulus-Wolken+kuehler Wind=Gewitter,Regen,Cumulonimbus.| )
+        (make erklaer ^rulenr 6 ^text
+ |Altocumulus kann Gutes und Schlechtes bedeuten.| )
+        (make erklaer ^rulenr 6.2 ^text
+ |Altocumulus/schnell ziehend=Regen,Wind.| )
+        (make erklaer ^rulenr 6.3 ^text
+ |Altocumulus/langsam ziehend=Schoenwetter.| )
+        (make erklaer ^rulenr 9 ^text
+ |Cirrocumulus=entweder sich auffuellendes oder neues Tief.| )
+        (make erklaer ^rulenr 10 ^text
+ |Cirrus/Cirrostratus/fallender Druck: TD-Gebiet im anzug.| )
+        (make erklaer ^rulenr 11 ^text
+ |Altostratus/fallender Druck=Ns,Regen,Wind,Temp. faellt.| )
+        (make erklaer ^rulenr 12 ^text
+ |Nimbostratus/Regen=voruebergehend schoen,warm,stratus=Warmfront.| )
+        (make erklaer ^rulenr 13 ^text
+ |Nimbostratus: bald Regen,Wind,Kuehle,Luftdruck faellt.| )
+        (make erklaer ^rulenr 14 ^text
+ |Cumulonimbus=bald Regen,Wind,Kaelte=Kaltfront.| )
+        (make erklaer ^rulenr 15 ^text
+ |Cumulonimbus/Regen:Kaelte,Aufheiterung,Regen hoert bald auf.| )
+        (make erklaer ^rulenr 16 ^text
+ |Tiefer Luftdruck bed. meistens gleichbleibend schlechtes Wetter.| )
+
+        (make erklaer ^rulenr 17 ^text
+ |Luftdruck lange unveraendert=keine grosse LD-Aenderung bis in|
+        | 6-12h.| )
+        (make erklaer ^rulenr 18 ^text
+ |Luftdruck steigt noch stetig=gutes Wetter in 6-12h.| )
+         (make erklaer ^rulenr 19 ^text
+ |Luftdruck steigt langsam stetig was fuer Wetterverbesserung|
+         | spricht.| )
+         (make erklaer ^rulenr 20 ^text
+ |Luftdruck faellt mehr als 1mb/h=Sturm,weiterer Druckfall,Regen.| )
+         (make erklaer ^rulenr 21 ^text
+ |Hoher Luftdruck bei eher gutem Wetter wenig Wolken,|
+         |Niederschlaege.| )
+         (make erklaer ^rulenr 22 ^text
+ |Tiefer Luftdruck bei eher schlechtem Wetter.| )
+         (make erklaer ^rulenr 23 ^text
+ |Wolkendichte nimmt stark zu: TD-Einfluss,mehr Wolken in 1-3h.| )
+         (make erklaer ^rulenr 24 ^text
+ |Wolkendichte nimmt stark ab: HD-Einfluss,weniger Wolken in 1-3h.| )
+         (make erklaer ^rulenr 25 ^text
+ |Starke Winddrehung verkuendet Wetterumschwung.| )
+         (make erklaer ^rulenr 26 ^text
+ |Wind nahm wahrscheinlich vom Morgen zum Mittag hin zu:|
+ (crlf) |gutes Wetter.| )
+         (make erklaer ^rulenr 26.2 ^text
+ |Hypothese der Windzunahme durch Abfrage bestaetigt.| )
+         (make erklaer ^rulenr 28 ^text
+ |Wind nahm wahrscheinlich vom Mittag zum Abend hin zu:|
+ (crlf) |schlechtes Wetter.| )
+         (make erklaer ^rulenr 28.2 ^text
+ |Hypothese der Windzunahme durch Abfrage bestaetigt.| )
+         (make erklaer ^rulenr 30 ^text
+ |Hartnaeckiger Nebel bringt Regen.| )
+         (make erklaer ^rulenr 31 ^text
+ |Nur Morgennebel verkuendet weniger Niederschlaege.| )
+         (make erklaer ^rulenr 31.2 ^text
+ |Es hatte nur Morgennebel, durch Abfrage bestaetigt.| )
+         (make erklaer ^rulenr 32 ^text
+ |Hypothese viel Morgentau da bis jetzt hohe Temperaturen.| )
+         (make erklaer ^rulenr 32.2 ^text
+ |Hypothese Morgentau durch Abfrage bestaetigt.| )
+         (make erklaer ^rulenr 32.3 ^text
+ |Hypothese Morgentau durch Abfrage widerlegt.| )
+         (make erklaer ^rulenr 35 ^text
+ |Luftfeuchtigkeit berechnet aus Temp. und absoluter Feuchtigkeit.| )
+         (make erklaer ^rulenr 36 ^text
+ |Luft ist wassergesaettigt=100% :bedeutet Nebel.| )
+         (make erklaer ^rulenr 37 ^text
+ |Sued-Wetterlage: Sued-Winde,trockene Luft,wenig Wolken,|
+         |Niederschlaege.| )
+         (make erklaer ^rulenr 38 ^text
+ |Nord-Wetterlage: Nord-Winde,kalt,regnerisch.| )
+         (make erklaer ^rulenr 39 ^text
+ |West-wetterlage: West-Winde,regnerisch,viele Wolken,wechselhaft.| )
+         (make erklaer ^rulenr 40 ^text
+ |Hypothese verbreiterte Kondensstreifen von Duesenflugzeugen.| )
+         (make erklaer ^rulenr 40.2 ^text
+ |Kondensstr. aufgeloest=trockene obere Luftschichten,kein Regen.| )
+         (make erklaer ^rulenr 40.3 ^text
+ |Kondensstr. dicht oder verweht=Warmfront,Regen.| )
+         (make erklaer ^rulenr 43 ^text
+ |Grosse Hitze,Altocumulus,wenig Wind,hohe Luftfeuchtigkeit|
+ |=evtl.Gewitter.| )
+         (make erklaer ^rulenr 44 ^text
+ |Cirrus oder Cirrostratus kuendigen ein T in 6-12h an=Regen,|
+ (crlf) |Wind,Wolken.| )
+         (make erklaer ^rulenr 45 ^text
+ |Stabile Hochdrucklage im Sommer:wenig Wolken und Niederschlaege.| )
+         (make erklaer ^rulenr 46 ^text
+ |Stabile Hochdrucklage im Winter:Bodennebel ca. 200m dick,evtl.|
+ |Stratus-wolken.| )
+
+        (make erklaer ^rulenr 47 ^text
+ |Wetterlage:Flache Druckverteilung=Waermegewitter,Quellwolken.| )
+        (make erklaer ^rulenr 48 ^text
+ |Wind auffrischend: hoehere Windstaerke in Zukunft.| )
+        (make erklaer ^rulenr 49 ^text
+ |Wind abflauend : weniger Wind in naher Zukunft.| )
+        (make erklaer ^rulenr 50 ^text
+ |Wenn es regnet muss es auch Wolken geben.| )
+        (make erklaer ^rulenr 51 ^text
+ |Wenn es regnet muss die Luftfeuchtigkeit hoch sein.| )
+        (make erklaer ^rulenr 52 ^text
+ |Luftdruck faellt, tieferer Luftdruck in 6-12H.| )
+        (make next-rule ^rtask startVAXfrog )
+)
+
+
+(p startVAXfrog-titel
+        (next-rule ^rtask startVAXfrog )
+        -->
+        (remove 1 )
+                                  ;'titelbild'
+        (write (crlf)
+                 (crlf)| v       v    a     x      x                     |
+                 (crlf)|  v     v    a a     x    x    ff                |
+                 (crlf)|  v     v    a a      x  x    f  f               |
+                 (crlf)|   v   v    a   a      xx     f                  |
+                 (crlf)|   v   v    aaaaa      xx    fff  r rr  oo   gg  |
+                 (crlf)|    v v    a     a    x  x    f   rr   o  o g  g |
+                 (crlf)|    v v    a     a   x    x   f   r    o  o g  g |
+                 (crlf)|     v    a       a x      x  f   r     oo   ggg |
+                 (crlf)|                                               g |
+                 (crlf)|                                            g  g |
+                 (crlf)|                                             gg  |
+                 (crlf) (crlf) (crlf)
+                 |     Expertensystem fuer die Wettervorhersage| (crlf) (crlf)
+        |M.lard. 86 (C)DIGITAL| (crlf) |Weiter mit -return-  :| )
+        (bind <x> (acceptline) )
+        (make next-rule ^rtask help2 ^status help )  ;einfuehrende erklaerung
+)                                                    ;obligatorisch
+
+
+;(p help/nohelp-fehler  ;wenn einfuehrende erklaerung nur optional gewuenscht
+;                       ;oben ^status help durch ^status (accept) ersetzen
+;       (next-rule ^rtask help2 ^status { <> help <> nohelp } )
+;       -->
+;       (remove 1 )
+;       (write (crlf) |Nur HELP oder NOHELP moeglich : | )
+;       (make next-rule ^rtask help2 ^status (accept) )
+;)
+
+
+(p daten-einlesen-text
+        (next-rule ^rtask help2 ^status nohelp )
+        -->
+        (remove 1 )
+        (write (crlf)
+         (crlf) |Geben Sie bitte auf jede der folgenden Fragen drei|
+         (crlf) |Werte ein .Den ersten fuer die Wetterlage vor 6-12|
+         (crlf) |Stunden,den zweiten fuer die Wetterlage vor|
+         (crlf) |1/2-3 St. ,den letzten fuer die Gegenwart. | (crlf)
+         (crlf) |Wenn Sie ueberhaupt nicht wissen was Sie eingeben|
+         (crlf) |sollen dann geben Sie ein '?'ein.|
+         (crlf) )
+        (make next-rule ^rtask einlesen )
+)
+(p daten-einlesen
+         (next-rule ^rtask einlesen )
+         (frage ^attribut { <at> <> jahreszeit } ^status nil )
+         -->
+         (write (crlf) (substr 2 text inf ) )
+         (modify 2 ^wert1 (accept) ^wert2 (accept) ^wert3 (accept) ^status g )
+)
+(p daten-einlesen-jz
+         (next-rule ^rtask einlesen )
+         (frage ^attribut jahreszeit ^status nil )
+         -->
+         (write (crlf) (substr 2 text inf ) )
+         (modify 2 ^wert1 (accept) ^status g )
+)
+(p daten-einlesen-unsicher-1
+         (frage ^status g ^wert1 ?? )
+         -->
+         (write (crlf) |Geschaetzter 1. Wert:| ) (bind <z> (accept) )
+         (write (crlf) |Sicherheit (0-100%):| )
+         (modify 1 ^wert1 <z> ^w1 (accept) )
+)
+(p daten-einlesen-unsicher-2
+         (frage ^status g ^wert2 ?? )
+         -->
+         (write (crlf) |Geschaetzter 2. Wert:| ) (bind <z> (accept) )
+         (write (crlf) |Sicherheit (0-100%):| )
+         (modify 1 ^wert2 <z> ^w2 (accept) )
+)
+(p daten-einlesen-unsicher-3
+         (frage ^status g ^wert3 ?? )
+         -->
+         (write (crlf) |Geschaetzter 3. Wert:| ) (bind <z> (accept) )
+         (write (crlf) |Sicherheit (0-100%):| )
+         (modify 1 ^wert3 <z> ^w3 (accept) )
+)
+(p daten-kontrollieren_1.           ; beantwortete frage
+         (frage ^status g ^attribut { <at> <> wolkentyp <> jahreszeit }
+                 ^wert1 <w1>
+                 ^max <max> ^min <min> )
+         (next-rule ^rtask einlesen )
+        -(frage ^attribut <at>             ;keine korrekte antwort
+                 ^wert1 { <=> 1 <= <max> >= <min> } )
+        -(frage ^attribut <at> ^wert1 << ?? ? >> )
+         -->
+         (write (crlf)|FEHLER! Erster Wert zu gross,zu klein oder keine Zahl|
+                 (crlf)|Ihre letzte Chance: | )
+         (modify 1 ^wert1 (accept) )
+)
+(p daten-kontrollieren_2.
+         (frage ^status g ^attribut { <at> <> wolkentyp <> jahreszeit }
+                 ^wert2 <w2> ^max <max> ^min <min> )
+         (next-rule ^rtask einlesen )
+        -(frage ^attribut <at> ^wert2 { <=> 1 <= <max> >= <min> } )
+        -(frage ^attribut <at> ^wert2 << ?? ? >> )
+         -->
+         (write (crlf)|FEHLER! Zweiter Wert zu gross,zu klein oder keine Zahl|
+                 (crlf)|Ihre letzte Chance : | )
+         (modify 1 ^wert2 (accept) )
+)
+(p daten-kontrollieren_3.
+        (frage ^status g ^attribut { <at> <> wolkentyp <> jahreszeit }
+                ^wert3 <w3> ^max <max> ^min <min> )
+        (next-rule ^rtask einlesen )
+        -(frage ^attribut <at> ^wert3 { <=> 1 <= <max> >= <min> } )
+        -(frage ^attribut <at> ^wert3 << ? ?? >> )
+        -->
+        (write (crlf)|FEHLER! Dritter Wert zu gross,zu klein oder keine Zahl|
+                (crlf)|Ihre letzte Chance : | )
+        (modify 1 ^wert3 (accept) )
+)
+
+
+(p daten-kontrollieren-wolkentyp
+        (frage ^status g ^attribut wolkentyp
+                ^wert1 <w1> ^wert2 <w2> ^wert3 <w3> )
+        (next-rule ^rtask einlesen )
+       -(frage ^attribut wolkentyp  ^wert1 <<  st
+         sc  cu  cb  ns  as  ac  ci  cc  cs  k  ? ?? >>
+                ^wert2 << st sc cu cb ns as ac ci cc cs k ? ?? >>
+                ^wert3 << st sc cu cb ns as ac ci cc cs k ? ?? >> )
+        -(frage ^attribut wolkentyp ^wert1 ? ^wert2 ? ^wert3 ? )
+        -->
+        (write (crlf)|FEHLER! solch ein Wolkentyp existiert nicht|
+                (crlf)|Ihre letzte Chance(alle Werte neu): | )
+        (modify 1 ^wert1 (accept) ^wert2 (accept) ^wert3 (accept) )
+)
+
+(p daten-kontrollieren-jahreszeit
+        (frage ^status g ^attribut jahreszeit
+                ^wert1 <w1> ^wert2 <w2> ^wert3 <w3> )
+        (next-rule ^rtask einlesen )
+       -(frage ^attribut jahreszeit ^wert1 << s w fh ? >> )
+        -->
+        (write (crlf)|FEHLER! nur S , W und FH erlaubt|
+                (crlf)|Ihre letzte Chance: | )
+        (modify 1 ^wert1 (accept)  )
+)
+
+
+(p zeiten                                       ;Wetter-wm's initialisieren
+        (next-rule ^rtask einlesen )
+       -(frage ^status << nil >> )
+        (frage ^attribut jahreszeit ^wert1 <jz> )
+        (frage ^attribut luftdruck ^wert1 <lud1> ^wert2 <lud2> ^wert3 <lud3>
+         ^w1 <11> ^w2 <12> ^w3 <13> )
+      (frage ^attribut windrichtung ^wert1 <wir1> ^wert2 <wir2> ^wert3 <wir3>
+         ^w1 <21> ^w2 <22> ^w3 <23>  )
+       (frage ^attribut windstaerke ^wert1 <wis1> ^wert2 <wis2> ^wert3 <wis3>
+         ^w1 <31> ^w2 <32> ^w3 <33> )
+        (frage ^attribut luftfeuchtigkeit ^wert1 <luf1> ^wert2 <luf2>
+         ^w1 <41> ^w2 <42> ^w3 <43>    ^wert3 <luf3> )
+        (frage ^attribut nebel ^wert1 <neb1> ^wert2 <neb2> ^wert3 <neb3>
+         ^w1 <51> ^w2 <52> ^w3 <53> )
+        (frage ^attribut temperatur ^wert1 <lut1> ^wert2 <lut2> ^wert3 <lut3>
+         ^w1 <61> ^w2 <62> ^w3 <63> )
+      (frage ^attribut wolkendichte ^wert1 <wod1> ^wert2 <wod2> ^wert3 <wod3>
+         ^w1 <71> ^w2 <72> ^w3 <73> )
+        (frage ^attribut wolkentyp ^wert1 <wot1> ^wert2 <wot2> ^wert3 <wot3>
+         ^w1 <81> ^w2 <82> ^w3 <83> )
+        (frage ^attribut regen ^wert1 <reg1> ^wert2 <reg2> ^wert3 <reg3>
+         ^w1 <91> ^w2 <92> ^w3 <93> )
+
+                                ;wetter der versch. zeiten generieren
+        -->
+        (remove 1 )
+        (make wetter ^zeit 5 ^luftdruck <lud3> ^windrichtung <wir3>
+        ^windstaerke <wis3> ^luftfeuchtigkeit <luf3> ^nebel <neb3> ^temperatur
+         <lut3> ^wolkendichte <wod3> ^wolkentyp '?' ^regen <reg3>
+         ^ld 0 ^wr 0 ^ws 0 ^lf 0 ^mt 0 ^n 0 ^t 0 ^wd 0 ^wt 0 ^r 0 ^ks 0 ^wl 0
+         ^morgentau '?' ^jahreszeit <jz> ^wz 0 ^zeit-sym 6-12 )
+         (make wetter ^zeit 4 ^luftdruck <lud3> ^windrichtung <wir3>
+        ^windstaerke <wis3> ^luftfeuchtigkeit <luf3> ^nebel <neb3> ^temperatur
+         <lut3> ^wolkendichte <wod3> ^wolkentyp <wot3> ^regen <reg3>
+         ^ld 0 ^wr 0 ^ws 0 ^lf 0 ^mt 0 ^n 0 ^t 0 ^wd 0 ^wt 0 ^r 0
+         ^ks 0 ^wl 0 ^morgentau '?' ^jahreszeit <jz> ^wz 0 ^zeit-sym 1/2-3 )
+         (make wetter ^zeit 3 ^luftdruck <lud3> ^windrichtung <wir3>
+        ^windstaerke <wis3> ^luftfeuchtigkeit <luf3> ^nebel <neb3> ^temperatur
+         <lut3> ^wolkendichte <wod3> ^wolkentyp <wot3> ^regen <reg3>
+         ^ld <13> ^wr <23> ^ws <33> ^lf <43> ^mt 0 ^n <53> ^t <63> ^zeit-sym
+         0 ^wd <73> ^wt <83> ^r <93> ^ks 0 ^wl 0 ^jahreszeit <jz> ^wz 0 )
+         (make wetter ^zeit 2 ^luftdruck <lud2> ^windrichtung <wir2>
+        ^windstaerke <wis2> ^luftfeuchtigkeit <luf2> ^nebel <neb2> ^temperatur
+         <lut2> ^wolkendichte <wod2> ^wolkentyp <wot2> ^regen <reg2>
+         ^ld <12> ^wr <22> ^ws <32> ^lf <42> ^mt 0 ^n <52> ^t <62> ^zeit-sym
+         1/2-3 ^wd <72> ^wt <82> ^r <92> ^ks 0 ^wl 0 ^jahreszeit <jz> ^wz 0 )
+         (make wetter ^zeit 1 ^luftdruck <lud1> ^windrichtung <wir1>
+        ^windstaerke <wis1> ^luftfeuchtigkeit <luf1> ^nebel <neb1> ^temperatur
+         <lut1> ^wolkendichte <wod1> ^wolkentyp <wot1> ^regen <reg1>
+         ^ld <11> ^wr <21> ^ws <31> ^lf <41> ^mt 0 ^n <51> ^t <61> ^zeit-sym
+         6-12 ^wd <71> ^wt <81> ^r <91> ^ks 0 ^wl 0 ^jahreszeit <jz> ^wz 0 )
+;
+;        Dank der MEA Strategie werden die Rule-groups in der
+;         umgekehrten Reihenfolge der nachfolgenden make's abgearbeitet
+;         (erstes cond-elem. ist group controller und MEA bevorzugt rules,
+;          welche juengere wm's matchen im ersten cond.-elem )
+         (make next-group ^gtask re-dialog )
+         (make next-group ^gtask dialog      )      ;erklaer.,ausgabe-dialog
+         (make next-group ^gtask ausgabe )         ;ausgabe der ergebnisse
+         (make next-group ^gtask correct )
+         (make next-group ^gtask prognose-impl )   ;x-->x rules erst nachher
+         (make next-group ^gtask prognose )       ;eigentliches schlussfolgern
+         (make next-group ^gtask count-indicator ) ;zeigt 'denkvorgang'
+         (make next-group ^gtask ?/default-replace )
+         (make next-group ^gtask ?/prev-replace )
+         (make next-group ^gtask tendenzen )      ;nur aus sicheren daten ber.
+         (make next-group ^gtask initialisieren )  ;daten abfragen
+         (write (crlf) |Danke.     Auswertung. . . .| (crlf) )
+         (write |Sind alle Angaben absolut sicher?J,N (oder HELP) :| (crlf) )
+         (make next-rule ^rtask bestimmth-zeit ^status (accept) )
+         (write (crlf) (crlf) )
+)
+(p bestimmtheit-zeit-abfragen
+         (next-group ^gtask initialisieren )
+         (next-rule ^rtask bestimmth-zeit ^status N )
+         -->
+         (remove 2 )
+         (write (crlf) |In welcher zeit nicht ?(1-5,oder HELP) : | )
+         (make next-rule ^rtask bestimmth-atts ^time (accept) )
+)
+(p bestimmtheit-zeit-abfragen-fehler
+         (next-group ^gtask initialisieren )
+        (next-rule ^rtask bestimmth-zeit ^status { <> j <> n <> help } )
+        -->
+        (remove 2 )
+        (write (crlf) |Sie Tolpatsch!|
+          (crlf) |J ODER N sind moeglich .|
+          (crlf) |Ihre letzte Chance :| )
+        (make next-rule ^rtask bestimmth-zeit ^status (accept) )
+)
+
+
+(p bestimmtheit-attribute-abfragen
+        (next-group ^gtask initialisieren )
+        (next-rule ^rtask bestimmth-atts ^time <t> ^time << 1 2 3 4 5 >> )
+        { <result> (wetter ^zeit <t> ) }
+        -->
+        (remove 2 )
+        (write (crlf) |Geben Sie die Bestimmtheit fuer jedes Wetterelement|
+               (crlf) |von Zeit | <t> | ein (0-100,0=willkuerlich 100=|
+                      |absolut sicher)| (crlf) )
+        (write |Luftdruck:    | ) (bind <lud> (accept))
+        (write |Windrichtung: | ) (bind <wir> (accept))
+        (write |Windstaerke:  | ) (bind <wis> (accept))
+        (write |Luftfeuchtig.:| ) (bind <luf> (accept))
+        (write |Nebel:        | ) (bind <neb> (accept))
+        (write |Temperatur:   | ) (bind <lut> (accept))
+        (write |Wolkendichte: | ) (bind <wod> (accept))
+        (write |Wolkentyp:    | ) (bind <wot> (accept))
+        (write |Regen:        | ) (bind <reg> (accept))
+        (modify <result> ^ld <lud> ^wr <wir> ^ws <wis> ^lf <luf> ^n <neb>
+                ^t <lut> ^wd <wod> ^wt <wot> ^r <reg> )
+        (write |Sind alle Angaben absolut sicher ? j,n : | (crlf) )
+        (make next-rule ^rtask bestimmth-zeit ^status (accept) )
+)
+
+
+(p bestimmtheit-attribute-abfragen-fehler
+        (next-group ^gtask initialisieren )
+        (next-rule ^rtask bestimmth-atts ^time { <> 1 <> 2 <> 3 <> 4 <> 5
+                <> help } )
+        -->
+        (write (crlf) |Nur 1,2, oder 3 ist moeglich. | (crlf)
+                |Ihre letzte Chance : | )
+        (remove 2 )
+        (make next-rule ^rtask bestimmth-atts ^time (accept) )
+)
+
+
+
+;                * * * * * TENDENZEN BERECHNEN * * * *
+;                *         (^gtask tendenzen )       *
+;                * * * * * * * * * * * * * * * * * * *
+;                fuer die wetterprognose sind auch daten ueber
+;                die entwicklungsrichtungen des wetters wichtig.
+;                diese muessen vorher berechnet werden , da in OPS5 leider
+;                keine conds. vom typ ^xyz < (compute <x> - z ) zugelassen
+;                sind.die tendenzen werden nur aus bekannten daten berechnet,
+;                nicht aus willkuerlichen defaults.daher berechnung vor
+;                den ?/default-rules.
+
+(p tendenzen:1-3-luftdruck
+        (next-group ^gtask tendenzen )
+        (wetter ^zeit 1 ^luftdruck { <> ? <ld1> } )
+        (wetter ^zeit 3 ^luftdruck { <> ? <ld3> } )
+        (rcontr ^rulen 1-3-ld ^count <> 1 )
+        -->
+        (make tendenz ^1-3-luftdruck (compute <ld3> - <ld1> ) )
+        (modify 4 ^count 1 )
+)
+; wenn zeit ^luftdruck ? in zeit 3 dann tendenz
+
+
+
+(p tendenzen:2-3-luftdruck
+        (next-group ^gtask tendenzen )
+        (wetter ^zeit 2 ^luftdruck { <> ? <ld2> } )
+        (wetter ^zeit 3 ^luftdruck { <> ? <ld3> } )
+        (rcontr ^rulen 2-3-ld ^count <> 1 )
+        -->
+        (make tendenz ^2-3-luftdruck (compute <ld3> - <ld2> ) )
+        (modify 4 ^count 1 )
+)
+
+(p tendenzen:1-3-windrichtung
+        (next-group ^gtask tendenzen )
+        (wetter ^zeit 1 ^windrichtung { <> ? <wr1> } )
+        (wetter ^zeit 3 ^windrichtung { <> ? <wr3> } )
+        (rcontr ^rulen 1-3-wr ^count <> 1 )
+        -->
+        (make tendenz ^1-3-windrichtung (compute <wr3> - <wr1> ) )
+        (modify 4 ^count 1 )
+)
+
+(p tendenzen:1-3-temperatur
+        (next-group ^gtask tendenzen )
+        (wetter ^zeit 1 ^temperatur { <> ? <temp1> } )
+        (wetter ^zeit 3 ^temperatur { <> ? <temp3> } )
+        (rcontr ^rulen 1-3-t ^count <> 1 )
+        -->
+        (make tendenz ^1-3-temperatur (compute <temp3> - <temp1> ) )
+        (modify 4 ^count 1 )
+)
+
+(p tendenzen:2-3-wolkendichte
+        (next-group ^gtask tendenzen )
+        (wetter ^zeit 2 ^wolkendichte { <> ? <wolk2> } )
+        (wetter ^zeit 3 ^wolkendichte { <> ? <wolk3> } )
+        (rcontr ^rulen 2-3-wd ^count <> 1 )
+        -->
+        (make tendenz ^2-3-wolkendichte (compute <wolk3> - <wolk2> ) )
+        (modify 4 ^count 1 )
+)
+
+
+;    * * * FRAGEZEICHEN IN DER EINGABE DURCH WERT AUS T-1 ERSETZEN * * *
+;    *                (^gtask ?/prev-replace )                          *
+;    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+;
+;    * * * * * FRAGEZEICHEN IN DER EINGABE DURCH DEF. ERSETZEN * * * * *
+;    *                (^gtask ?/default-replace )                       *
+;    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+;                damit es moeglich wird ein fragezeichen einzugeben,
+;                wenn wetterdaten absolut unbekannt sind,muessen diese
+;                nacher durch wahrscheinliche standardwerte ersetzt werden,
+;                damit es nicht zu berechnungen wie (compute ? - 2 ) kommt.
+;                die bestimmtheit der attribute mit unbekanntem wert wird
+;                auf 0 gesetzt .bevor jedoch ein willkuerlicher wert gewaehlt
+;                wird,sucht vaxfrog den wert aus der vorhergehenden zeit.
+
+
+(p def-?-replace:jahreszeit
+        (next-group ^gtask ?/default-replace )
+        (wetter ^jahreszeit ? )
+        -->
+        (modify 2 ^jahreszeit fh )  ;in 50% der faelle richtig,wenig einfluss
+)
+(p prev-?-replace:luftdruck
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^luftdruck ? )
+        (wetter ^zeit (compute <t> - 1 ) ^luftdruck { <> ? <ld> } )
+        -->
+        (modify 2 ^luftdruck <ld> ^ld 0 )
+)
+(p def-?-replace:luftdruck
+        (next-group ^gtask ?/default-replace )
+        (wetter ^luftdruck ? )
+        -->
+        (modify 2 ^luftdruck 1010 ^ld 0 ) ;'veraenderlich' auf hoehe Zuerich
+)
+(p prev-?-replace:windrichtung
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^windrichtung ? )
+        (wetter ^zeit (compute <t> - 1 ) ^windrichtung { <> ? <wr> } )
+        -->
+        (modify 2 ^windrichtung <wr> ^wr 0 )
+)
+(p def-?-replace:windrichtung
+        (next-group ^gtask ?/default-replace )
+        (wetter ^windrichtung ? )
+        -->
+        (modify 2 ^windrichtung 270 ^wr 0 )   ;West-Wetterlage am haeufigsten
+)
+(p prev-?-replace:windstaerke
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^windstaerke ? )
+        (wetter ^zeit (compute <t> - 1 ) ^windstaerke { <> ? <ws> } )
+        -->
+        (modify 2 ^windstaerke <ws> ^ws 0 )
+)
+(p def-?-replace:windstaerke
+        (next-group ^gtask ?/default-replace )
+        (wetter ^windstaerke ? )
+        -->
+        (modify 2 ^windstaerke 3 ^ws 0 )    ;ein wenig wind blaest meistens
+)
+(p prev-?-replace:luftfeuchtigkeit
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^luftfeuchtigkeit ? )
+        (wetter ^zeit (compute <t> - 1 ) ^luftfeuchtigkeit { <> ? <lf> } )
+        -->
+        (modify 2 ^luftfeuchtigkeit <lf> ^lf 0 )
+)
+(p def-?-replace:luftfeuchtigkeit
+        (next-group ^gtask ?/default-replace )
+        (wetter ^luftfeuchtigkeit ? )
+        -->
+        (modify 2 ^luftfeuchtigkeit 50 ^lf 0 )
+)
+(p prev-?-replace:nebel
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^nebel ? )
+        (wetter ^zeit (compute <t> - 1 ) ^nebel { <> ? <n> } )
+        -->
+        (modify 2 ^nebel <n> ^n 0 )
+)
+(p def-?-replace:nebel
+        (next-group ^gtask ?/default-replace )
+        (wetter ^nebel ? )
+        -->
+        (modify 2 ^nebel 12 ^n 0 )  ; meist nur morgennbel
+)
+(p prev-?-replace:temperatur
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^temperatur ? )
+        (wetter ^zeit (compute <t> - 1 ) ^temperatur { <> ? <temp> } )
+        -->
+        (modify 2 ^temperatur <temp> ^t 0 )
+)
+(p def-?-replace:temperatur
+        (next-group ^gtask ?/default-replace )
+        (wetter ^temperatur ? )
+        -->
+        (modify 2 ^temperatur 18 ^t 0 )
+)
+(p prev-?-replace:wolkendichte
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^wolkendichte ? )
+        (wetter ^zeit (compute <t> - 1 ) ^wolkendichte { <> ? <wd> } )
+        -->
+        (modify 2 ^wolkendichte <wd> ^wd 0 )
+)
+(p def-?-replace:wolkendichte
+        (next-group ^gtask ?/default-replace )
+        (wetter ^wolkendichte ? )
+        -->
+        (modify 2 ^wolkendichte 3 ^wd 0 )  ;= halb bedeckt
+)
+(p prev-?-replace:wolkentyp
+        (next-group ?/prev-replace )
+        (wetter ^zeit <t> ^wolkentyp ? )
+        (wetter ^zeit (compute <t> - 1 ) ^wolkentyp { <> ? <wt> } )
+        -->
+        (modify 2 ^wolkentyp <wt> ^wt 0 )
+)
+(p def-?-replace:wolkentyp
+        (next-group ?/def-replace )
+        (wetter ^wolkentyp ? )
+        -->
+        (modify 2 ^wt 0 )
+)
+(p prev-?-replace:regen
+        (next-group ^gtask ?/prev-replace )
+        (wetter ^zeit <t> ^regen ? )
+        (wetter ^zeit (compute <t> - 1 ) ^regen { <> ? <r> } )
+        -->
+        (modify 2 ^regen <r> ^r 0 )
+)
+
+(p def-?-replace:regen
+        (next-group ^gtask ?/default-replace )
+        (wetter ^regen ? )
+        -->
+        (modify 2 ^regen 0  ^r 0 ) ;meist kein regen (fuer london aendern!)
+)
+
+
+;                        * * * * * DENKPROZESS  ZEIGEN * * * * * *
+;                        *       (^gtask=count-indicator)        *
+;                        * * * * * * * * * * * * * * * * * * * * *
+;                        feuert nach jeder prognose-rule.
+;                        macht den ablauf des denkens sichtbar,
+;                        merkt sich fuer welche rules spaeter erklaerungen
+;                        ausgegeben werden muessen (^rtask erklaerung)
+
+(p zeige-denkschritte
+        (next-group ^gtask count-indicator )
+        (next-rule  ^rtask indicate ^time <ruletxt> ^status <rulenr> )
+        (rcontr ^rulen indicator  ^count <couv> )
+        -->
+        (remove 2 )
+        (write (crlf) <couv> |. Rulenr:| <rulenr> |text: | <ruletxt> )
+        (modify 3 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask erklaerung ^status <rulenr> )
+)
+
+
+;                        * * * * REGELN zur WETTERPROGNOSE * * * *
+;                        *           (^gtask=prognose)           *
+;                        * * * * * * * * * * * * * * * * * * * * *
+
+;                        * * * * WOLKENTYP * * * *
+
+(P stratus-wolken-grosse-dichte          ; bei grosser dichte spruehnebel
+        (next-group ^gtask prognose )  ; moeglich (zb. bei bisenlage in CH)
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp st ^wt >
+                15 ^wolkendichte > 5 ^wd > 14 )
+        { <result> (wetter ^zeit (compute <timev> + 1 ) ^nebel <neatt> ^n
+                <nece> ) }
+        (rcontr ^rulen stratus ^count { < 2 <countv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^nebel (compute <neatt> + 24 ) ^n (compute
+                <nece> + 15 ) )
+        (modify 4 ^count (compute <countv> + 1 ) ^basis <timev> )
+
+        (make next-rule ^rtask indicate ^time stratuswolken-hoher-dichte
+                ^status 1 )
+        (make feuer ^att nebel ^time (compute <timev> + 1 )
+        ^text |Bei Stratus-wolken grosser Dichte ist Spruehnebel moeglich| )
+
+)
+
+
+(p stratocumulus-gr.-dichte              ;bei grosser dichte regen
+        (next-group ^gtask prognose ) ;(zb. nach kaltfront,oder nach warmfr.)
+         (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp sc ^wt >
+                 15 ^wolkendichte > 4 ^wd > 16 )
+         { <result> (wetter ^zeit (compute <timev> + 1 ) ^regen <reatt> ^r
+                { < 33 <rece> } ) }
+         (rcontr ^rulen stratocum-g ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^regen (compute <reatt> + 14 ) ^r (compute
+                 <rece> + 15 ) )
+         (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time stratocumulus-hoher-dichte
+                 ^status 2 )
+         (make feuer ^att regen ^time (compute <timev> + 1 )
+         ^text |Stratocumulus-wolken hoher Dichte koennen Regen bringen| )
+)
+(p stratocumulus-kl.-dichte                  ;kein regen zu erwarten
+         (next-group ^gtask prognose )      ;schoenwetterwolken im Winter
+         (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp sc ^wt >
+                 17 ^wolkendichte <= 4 ^wd > 16 ^jahreszeit << w fh >> )
+         { <result> (wetter ^zeit (compute <timev> + 1 )
+                 ^windstaerke <winds> ^ws { <wsc> < 30 }
+                 ^regen <reg> ^r { <rc> < 30 } ) }
+         (rcontr ^rulen stratocum-k ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^windstaerke (compute <winds> - 1 ) ^ws
+        (compute <wsc> + 17 ) ^regen (compute <reg> - 10 ) ^r (compute <rc>
+                 + 15 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time stratocumulus-kleine-dichte
+                 ^status 3 )
+        (make feuer ^att windstaerke ^time (compute <timev> + 1 )
+        ^text |Stratocumulus-wolken kleiner Dichte = ruhiges Wetter| )
+        (make feuer ^att regen ^time (compute <timev> + 1 )
+        ^text |Aus Stratocumulus kleiner Dichte ist kein Regen zu erwarten| )
+)
+(p cumulus-kleine-dichte                  ;bringen sicher keinen regen
+        (next-group ^gtask prognose )   ;(schoenwetterwolken).wind leicht
+                                          ;rechtsdrehend in boeen
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp cu ^wt > 14
+                 ^wolkendichte <= 4 ^wd > 14 )
+        { <result> (wetter ^zeit (compute <timev> + 1 )
+                 ^regen <reg> ^r { <rc> < 30 }
+                 ^windrichtung <wrv> ^wr { <wrc> < 30 } ) }
+        (rcontr ^rulen cumulus-k ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^regen (compute <reg> - 10 ) ^r (compute <rc> + 15 )
+          ^windrichtung (compute <wrv> + 12 ) ^wr (compute <wrc> + 15 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+     (make next-rule ^rtask indicate ^time cumulus-kleiner-dichte ^status 4 )
+        (make feuer ^att regen ^time (compute <timev> + 1 )
+        ^text |Kleine Cumuli sind Schoenwetterwolken,kein Regen| )
+        (make feuer ^att windrichtung ^time (compute <timev> + 1 )
+        ^text |Cumuluswolken bringen oft in den Boeen rechtsdrehenden Wind| )
+)
+                                         ; cumulus-congestus
+(p cumulus-grosse-dichte                ;grosse cumuli bei kuehler polarer
+        (next-group ^gtask prognose ) ;luftstroemung aus nw bei typ. 3-4 bft.
+                                         ;bringen evtl. schauer
+                                         ;(folgen der hauptdepression)
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp cu ^wt > 15
+               ^windstaerke > 2 ^wolkendichte > 4 ^wd > 18 ^temperatur < 20 )
+        { <result> (wetter ^zeit (compute <timev> + 1 )
+            ^wolkendichte <wold> ^wd { <wdc> < 30 } ^wt { <wtc> < 30 } ) }
+        (rcontr ^rulen cumulus-g ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^wolkendichte (compute <wold> + 1 ) ^wd
+            (compute <wdc> + 13 ) ^wolkentyp cb ^wt (compute <wtc> + 20 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+     (make next-rule ^rtask indicate ^time cumulus-grosse-dichte ^status 5 )
+        (make feuer ^att wolkendichte ^time (compute <timev> + 1 ) ^text
+         |Grosse Cumuluswolken bei dieser Wetterlage bringen evtl. Schauer.|
+        (crlf) |Cumuli werden sich noch hoeher und groesser auftuermen.| )
+        (make feuer ^att wolkentyp ^time (compute <timev> + 1 ) ^text
+         |Grosse Cumuli bei kuehler Luftstroemung bringen evtl. Schauer.|
+        (crlf) |Cumuli werden sich zu Cumulonimbus formen.| )
+)
+(p altocumulus-zusaetzliche-information-noetig     ; kann gut und schlecht sein
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 1 3 >> ^zeit <timev> ^wolkentyp ac ^wt > 19
+                 ^wolkendichte > 1 ^wd > 15 )
+      (rcontr ^rulen altocumulus-vd ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+     (write (crlf) |Ziehen die Ac-Wolken (S)chnell oder (L)angsam ?| (crlf) )
+        (make verdacht ^time2 <timev> ^wetteratt ac ^wert (accept) )
+        (modify 3 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time altocum->zusaetzl.inf.noetig
+                 ^status 6 )
+)
+(p altocumulus-schnell-ziehend            ; eher schlechtes zeichen
+        (next-group ^gtask prognose )
+        (verdacht ^time2 <timev> ^wetteratt ac ^wert s )
+        (wetter ^zeit (compute <timev> + 2 ) ^regen <reg> ^r { < 37 <rc> }
+        ^wolkendichte <wolk> ^wd { < 37 <wdc> } ^windstaerke <wnds>
+        ^ws { < 37 <wsc> } )
+        -->
+        (remove 2 )
+        (modify 3 ^regen (compute <reg> + 5 ) ^r (compute <rc> + 9 )
+                 ^wolkendichte (compute <wolk> + 1 ) ^wd (compute <wdc> + 9 )
+                 ^windstaerke (compute <wnds> + 1 ) ^ws (compute <wsc> + 9 ) )
+        (make next-rule ^rtask indicate ^time ac-schnell-ziehend=schlechtw.
+                 ^status 6.2 ) (bind <z> (compute <timev> + 2 ) )
+        (make feuer ^att regen ^time <z> ^text
+        |Schnell ziehende Altocumuli koennen Regen bringen.| )
+        (make feuer ^att wolkendichte ^time <z> ^text
+        |Schnell ziehende Altocumuli= Schlechtwetterboten,bedeckt in |
+                 |Zukunft.| )
+        (make feuer ^att windstaerke ^time <z> ^text
+        |Schnell ziehende Altocumuli= Schlechtwetterboten,eher mehr Wind.| )
+)
+(p altocumulus-langsam-ziehend         ;verkuendet eher schoenwetter
+        (next-group ^gtask prognose )
+        (verdacht ^time2 <timev> ^wetteratt ac ^wert 1 )
+        (wetter ^zeit (compute <timev> + 2 ) ^regen <reg> ^r { < 37 <rc> }
+        ^wolkendichte <wolk> ^wd { < 37 <wdc> } ^windstaerke <wnds>
+        ^ws { < 37 <wsc> } )
+
+        -->
+        (remove 2 )
+         (modify 3 ^regen (compute <reg> - 10 ) ^r (compute <rc> + 10 )
+                 ^wolkendichte (compute <wolk> - 1 ) ^wd (compute <wdc> + 10 )
+                ^windstaerke (compute <wnds> - 1 ) ^wd (compute <wdc> + 10 ) )
+         (make next-rule ^rtask indicate ^time ac-langsam-ziehend->schoen
+                 ^status 6.3 ) (bind <z> (compute <timev> + 2 ) )
+         (make feuer ^att regen ^time <z> ^text
+         |Ruhige Altocumuluswolken sind Schoenwetterwolken,kein Regen.| )
+         (make feuer ^att wolkendichte ^time <z> ^text
+         |Ruhige Altocumuluswolken sind Schoenwetterwolken,sie loesen sich|
+         (crlf) |evtl. auch wieder auf.| )
+         (make feuer ^att windstaerke ^time <z> ^text
+         |Langsam ziehende Altocumuli zeigen ruhiges Wetter an,wenig Wind.| )
+)
+(p cirrocumulus                    ; entweder ein sich auffuellendes tief ,
+                                   ; oder ein sich neu bildendes tief .
+                                   ; deuten auch auf abgebremste Bewegung
+                                   ; tiefs hin , an dessen rand sie auftreten
+         (next-group ^gtask prognose )
+         (wetter ^zeit <timev> ^zeit << 1 3 >> ^wolkentyp cc ^wt > 19
+                  ^wolkendichte > 2 ^wd > 19 )
+         (rcontr ^rulen cirrocum ^count { < 2 <couv> } ^basis <> <timev> )
+         -->
+                                  ;keine prognose
+         (modify 3 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time cc-wolken=unsicher ^status 9 )
+)
+;         * * * * * das klassische tief * * * * *
+(p cirrus-wolken-oder-cirrostratus/fallender-druck        ;schlechtes zeichen
+         (next-group ^gtask prognose )
+         (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp << ci cs >>
+             ^wolkendichte > 2 ^wt > 13 ^wd > 12 ^luftdruck <ld1> ^ld > 11 )
+         (tendenz ^1-3-luftdruck <= -1 )
+         { <result> (wetter ^zeit (compute <timev> + 1 )
+                 ^wt { < 43 <wtc> } ^regen <reg> ^r { < 43 <rc> }
+                 ^temperatur <temp> ^t { < 43 <tc> } ^wolkendichte <wolk>
+                 ^wd { < 43 <wdc> } ^luftdruck <ld2> ^ld { < 43 <ldc> }
+         ^windstaerke <wnds> ^ws { < 43 <wsc> } ^temperatur <tp> ^t <t> )}
+         (rcontr ^rulen cirrus ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^wolkentyp as ^wt (compute <wtc> + 18 )
+                 ^regen (compute <reg> + 12 ) ^r (compute <rc> + 17 )
+                 ^luftdruck (compute ( ( <ld1> - 1 ) + <ld2> ) // 2 )
+                 ^ld (compute <ldc> + 29 ) ^wolkendichte (compute <wolk> + 1 )
+                 ^wd (compute <wdc> + 17 ) ^windstaerke (compute <wnds> + 1 )
+                 ^ws (compute <wsc> + 16 ) ^t (compute <t> + 12 )
+                 ^temperatur (compute <tp> + 1 ) )
+
+         (modify 5 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time cirrus=as,regen,wind,tiefd.
+                 ^status 10 ) (bind <z> (compute <timev> + 1 ) )
+         (make feuer ^att wolkentyp ^time <z> ^text
+         |Ci oder Cs-wolken verkuenden bei fallendem Druck das nahen eines|
+         | Tiefs.| (crlf) |As-Wolken werden folgen.| )
+         (make feuer ^att regen ^time <z> ^text
+         |Ci und Cs-wolken kuendigen ein Tief mit Regen an.| )
+         (make feuer ^att luftdruck ^time <z> ^text
+         |Ci und Cs-wolken kuendigen ein Tiefdruckgebiet(Zyklone) an.| )
+         (make feuer ^att wolkendichte ^time <z> ^text
+         |Ci und Cs kuendigen ein TD-Gebiet mit vielen Wolken an.| )
+        (make feuer ^att windstaerke ^time <z> ^text
+         |Ci,Cs-wolken=nahendes TD-Gebiet,auffrischender Wind.| )
+        (make feuer ^att temperatur ^time <z> ^text
+         |Ci,Cs-wolken: nahende Warmfront =steigende Temp.| )
+)
+(p cirrus/cirrostratus/fallender-Druck:laengerfristig
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 1 3 >> ^zeit <timev> ^wolkentyp << ci cs >>
+                 ^wt > 14 ^wolkendichte >= 3 ^wd > 14 ^nebel < 12 )
+        (tendenz ^1-3-luftdruck <= -1 )
+        { <result> (wetter ^zeit (compute <timev> + 2 ) ^wt { < 33 <wtc> }
+                 ^regen <reg> ^r { < 33 <rc> } ^wd { < 33 <wdc> }
+                 ^luftdruck <lufd> ^ld <ldc> ^windstaerke <wnds> ^ws <wsc> ) }
+        (rcontr ^rulen ci/cs-langfristig ^count { < 2 <couv> } ^basis <>
+                 <timev> )
+        -->
+        (modify <result> ^wolkentyp ns ^wt (compute <wtc> + 11 )
+                 ^regen (compute <reg> + 16 ) ^r (compute <rc> + 13 )
+                 ^wolkendichte 5 ^wd (compute <wdc> + 15 ) ^ld (compute <ldc>
+             + 9 ) ^luftdruck (compute <lufd> - 2 ) ^ws (compute <wsc> + 8 )
+                 ^windstaerke (compute <wnds> + 2 ) )
+        (modify 5 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time cirrus/cirrostratus=TD
+                 ^status 44 ) (bind <z> (compute <timev> + 2 ) )
+        (make feuer ^att wolkentyp ^time <z> ^text
+        |Ci und Cs-wolken kuendigen bei fallendem Druck ein TD-Gebiet an|
+        (crlf) |Es wird Nimbostratus-regenwolken geben.| )
+        (make feuer ^att regen ^time <z> ^text
+        |Ci und Cs-wolken kuendigen ein Tief mit Regen an.| )
+        (make feuer ^att wolkendichte ^time <z> ^text
+        |Ci und Cs-wolken kuendigen ein Tief an, es wird bedeckt sein.| )
+        (make feuer ^att luftdruck ^time <z> ^text
+        |Cirrus & cs-wolken kuendigen bei fallendem Druck ein Tief an.| )
+        (make feuer ^att windstaerke ^time <z> ^text
+        |Ci und Cs-wolken kuendigen ein Tief an.Wind frischt im allg. auf.| )
+)
+(p altostratus/fallender-druck              ; dann kommts bald(ns,regen,boeen)
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp as ^wt > 12
+                 ^wolkendichte > 2 ^wd > 12 ^luftdruck <lfd> )
+        (tendenz ^1-3-luftdruck <= -1 )
+        { <result> (wetter ^zeit (compute <timev> + 1 ) ^wt { < 39 <wtc> }
+                 ^wolkendichte <wolk> ^wd { < 42 <wdc> }
+                 ^regen <reg> ^r { < 42 <rc> } ^ws { < 42 <wsc> }
+                 ^windstaerke <wnds> ^ld { < 42 <ldc> } ) }
+        (rcontr ^rulen altostratus ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^wolkentyp ns ^wt (compute <wtc> + 17 )
+                 ^regen 27 ^r (compute <rc> + 17 ) ^windstaerke
+        (compute <wnds> + 2 ) ^ws (compute <wsc> + 15 ) ^luftdruck
+        (compute <lfd> - 1 ) ^ld (compute <ldc> + 18 ) ^wd (compute <wdc> +
+        16 ) ^wolkendichte (compute <wolk> + 2 ) )
+        (modify 5 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time altostratus->ns,regen,wind
+                 ^status 11 ) (bind <z> (compute <timev> + 1 ) )
+        (make feuer ^att wolkentyp ^time <z> ^text
+        |Auf As mit fallendem Druck folgt Nimbostratus.| )
+        (make feuer ^att regen ^time <z> ^text
+        |As mit fallendem Druck verheisst TD-Gebiet mit Regen.| )
+        (make feuer ^att windstaerke ^time <z> ^text
+         |As,fallender Druck-> TD-Gebiet, Wind frischt auf.| )
+         (make feuer ^att luftdruck ^time <z> ^text
+         |As bei fallendem Druck deutet auf das nahen eines TD_Gebietes.| )
+         (make feuer ^att wolkendichte ^time <z> ^text
+         |As bei fallendem Druck: TD-Gebiet naht,bedeckt.| )
+)
+(p nimbostratus-noch-kein-regen           ; dann kommts gleich
+         (next-group ^gtask prognose )    ; (mit wind,kuehle,weiterhin ns)
+         (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp ns ^wt > 12
+                 ^wolkendichte > 2 ^wd > 12 ^regen < 12 ^windstaerke <wnds>
+                 ^temperatur <temp> ^lf <lfc> )
+         { <result> (wetter ^zeit (compute <timev> + 1 )
+         ^r { < 44 <rc> } ^t { < 44 <tc> } ^ws { < 44 <wsc> } ^wd <wdc> ) }
+        (rcontr ^rulen nimbostratus2 ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^regen 34 ^r (compute <rc> + 13 ) ^wolkentyp ns
+                 ^temperatur (compute <temp> - 2 ) ^t (compute <tc> + 13 )
+                 ^windstaerke (compute <wnds> + 2 ) ^ws (compute <wsc> + 15 )
+                 ^luftfeuchtigkeit 80 ^lf (compute <lfc> + 14 )
+                 ^wolkendichte 5 ^wd (compute <wdc> + 10 ) )
+         (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time nimbostratus->regen,boeen
+                 ^status 13 ) (bind <z> (compute <timev> + 1 ) )
+         (make feuer ^att regen ^time <z> ^text
+         |Nimbostratus-wolken sind boesartige Regenwolken.| )
+         (make feuer ^att wolkentyp ^time <z> ^text
+         |Weiterhin Nimbostraten bis sie "ausgeleert" sind.| )
+         (make feuer ^att temperatur ^time <z> ^text
+         |Ns : Temperatur faellt wegen Regen und Wind ein wenig.| )
+         (make feuer ^att windstaerke ^time <z> ^text
+         |Ns-wolken :bald sind starke Boeen zu erwarten.| )
+         (make feuer ^att luftfeuchtigkeit ^time <z> ^text
+         |Ns : Es wird immer feuchter vor der Warmfront.| )
+         (make feuer ^att wolkendichte ^time <z> ^text
+         |Ns-wolken : bald gibts nichts mehr zu lachen und zu sehen.| )
+)
+(p nimbostratus-schon-regen              ;dann hoerts bald auf fuer kurze zeit
+         (next-group ^gtask prognose )    ;(wolkenauflockerung,sc,warmluft)
+         (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp ns ^wt > 12
+                 ^wolkendichte > 2 ^wd > 12 ^regen >= 12 ^temperatur <temp> )
+         { <result> (wetter ^zeit (compute <timev> + 1 )
+                 ^ws { < 44 <wsc> }
+                 ^r { < 44 <rc> } ^wolkendichte <wolk> ^wd { < 44 <wdc> }
+                  ^t <tc> ^windrichtung <windr> ^wr <wrc> ) }
+         (rcontr ^rulen nimbostratus ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^ws (compute <wsc> + 15 )
+                 ^regen 10 ^r (compute <rc> + 13 ) ^luftfeuchtigkeit 95 ^lf 20
+                 ^wolkentyp sc ^wolkendichte (compute <wolk> - 1 )
+                 ^wd (compute <wdc> + 13 ) ^temperatur (compute <temp> + 7 )
+                 ^t (compute <tc> + 16 ) ^windrichtung (compute <windr> + 30 )
+                 ^wr (compute <wrc> + 12 ) )
+         (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time nimbostratus->bald-besserung
+                 ^status 12 ) (bind <z> (compute <timev> + 1 ) )
+        (make feuer ^att regen ^time <z> ^text
+         |Nimbostratus,Regen->es wird schon wieder aufhoeren.| )
+         (make feuer ^att luftfeuchtigkeit ^time <z> ^text
+         |NS-wolken,Regen:Luft ist sehr feucht nach der Warmfront.| )
+         (make feuer ^att wolkentyp ^time <z> ^text
+         |Nach der Warmfront mit Ns folgen meist Stratocumuli.| )
+        (make feuer ^att wolkendichte ^time <z> ^text
+        |Nach der Warmfront mit Ns gibt es manchmal Wolkenloecher.| )
+        (make feuer ^att temperatur ^time <z> ^text
+        |Nach der Warmfront mit Ns wird es (logo) warm.| )
+        (make feuer ^att windrichtung ^time <z> ^text
+        |Nach der Warmfront mit Ns dreht der Wind etwas nach rechts.| )
+)
+                                      ;regen setzt bald ein,hohe windstaerke
+(p cumulonimbus-noch-kein-regen       ;temperatur wird stark fallen (kaltfront)
+        (next-group ^gtask prognose ) ;weiterhin cb
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp cb ^wt > 12
+                 ^wolkendichte > 2 ^wd > 12 ^regen < 12 ^r > 9 )
+        { <result> (wetter ^zeit (compute <timev> + 1 )
+                 ^wolkendichte <wold> ^wd { < 50 <wdc> } ^regen <reg>
+                 ^windstaerke <wns> ^ws <wsc> ^windrichtung <wndr> ^wr <wrc>
+                 ^r { < 49 <rc> } ^temperatur <temp> ^t { < 44 <tc> } ) }
+       (rcontr ^rulen cumulonimb-nr ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^wolkendichte (compute <wold> + 1 )
+                 ^wd (compute <wdc> + 19 ) ^regen (compute <reg> + 26 )
+                 ^r (compute <rc> + 19 ) ^temperatur (compute <temp> - 6 )
+                 ^windstaerke (compute <wns> + 2 ) ^ws (compute <wsc> + 16 )
+                 ^windrichtung (compute <wndr> + 35 ) ^wr (compute <wrc> + 9 )
+                 ^t (compute <tc> + 15 ) ^wolkentyp cb )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time cumulonimbus-->gewitter
+                 ^status 14 ) (bind <z> (compute <timev> + 1 ) )
+        (make feuer ^att wolkendichte ^time <z> ^text
+        |Cumulonimbus-wolken: bald Gewitter,ganz bedeckt.| )
+        (make feuer ^att regen ^time <z> ^text
+        |Cb-wolken sind Regenwolken.Bald wissen sie das auch.| )
+        (make feuer ^att temperatur ^time <z> ^text
+        |Cb-wolken : Bald kommt die Kaltfront mit starkem Temperaturfall.| )
+        (make feuer ^att windstaerke ^time <z> ^text
+        |Cb-wolken: Kaltfront oder Gewitter mit stark auffrischendem Wind.| )
+        (make feuer ^att wolkentyp ^time <z> ^text
+        |Cumulonimbus-wolken/noch kein Regen : weiterhin Cb. | )
+        (make feuer ^att windrichtung ^time <z> ^text
+        |Cumulonimbus-wolken/noch kein Regen : nach der Kaltfront dreht|
+        |der Wind.| )
+)
+                                       ;bringt bald besserung weniger wind
+(p cumulonimbus-schon-regen           ;evtl. folgen schauer oder sogar gewitter
+        (next-group ^gtask prognose ) ;Cu,dann Sc die sich langsam aufloesen
+        (wetter ^zeit << 2 3 >> ^zeit <timev> ^wolkentyp cb ^wt > 30
+                 ^wolkendichte > 2 ^wd > 30 ^regen > 11 ^r > 9 )
+        { <result> (wetter ^zeit (compute <timev> + 1 ) ^luftdruck <lfd>
+                 ^wolkendichte <wold> ^wd { < 42 <wdc> } ^regen <reg>
+                 ^r { < 39 <rc> } ^temperatur <temp> ^t { < 44 <tc> }
+                 ^windrichtung <wndr> ^wr <wrc>
+
+                 ^ld <ld> ^windstaerke <wnds> ^ws { < 39 <wsc> } ) }
+       (rcontr ^rulen cumulonimb-sr ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^wolkendichte (compute <wold> - 2 ) ^wolkentyp cu
+                 ^wd (compute <wdc> + 13 ) ^regen (compute <reg> - 10 )
+                 ^r (compute <rc> + 11 ) ^temperatur (compute <temp> - 2 )
+                 ^t (compute <tc> + 11 ) ^ld (compute <ld> + 17 )
+                 ^luftdruck (compute <lfd> + 1 ) ^wr (compute <wrc> + 13 )
+                 ^windrichtung (compute <wndr> + 35 )
+                ^windstaerke (compute <wnds> - 2 ) ^ws (compute <wsc> + 14 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time cn/regen->bald-aufklaerung
+                 ^status 15 ) (bind <z> (compute <timev> + 1 ) )
+         (make feuer ^att wolkendichte ^time <z> ^text
+         |Nach der Kaltfront (Cb) wird es langsam heiterer. | )
+         (make feuer ^att wolkentyp ^time <z> ^text
+         |Nach der Kaltfront folgen meist Cumuli, dann Sc.| )
+         (make feuer ^att regen ^time <z> ^text
+         |Cb :Regen laesst bald, nur noch vereinzelte, oertliche Gewitter.| )
+         (make feuer ^att temperatur ^time <z> ^text
+         |Cb : Temperatur sinkt weiter, polare Kaltluft nach Kaltfront.| )
+         (make feuer ^att luftdruck ^time <z> ^text
+         |Cb : nach der Kaltfront beginnt der Druck wieder zu steigen.| )
+         (make feuer ^att windstaerke ^time <z> ^text
+         |Cb : Windstaerke nimmt zeitweilig ab nach der Kaltfront.| )
+         (make feuer ^att windrichtung ^time <z> ^text
+         |Cb : Wind dreht nach der kaltfront nach rechts.| )
+)
+                                        ;altocumulus castellanus bei grosser
+(p sommer/waerme-gewitter             ;hitze und evtl. grosser luftfeuchtigkeit
+         (next-group ^rtask prognose ); ,meist wenig wind--> gewitter in 6-18h
+         (wetter ^zeit << 1 3 >> ^zeit <timev> ^wolkentyp ac ^wt > 13
+                 ^wolkendichte > 3 ^wd > 12 ^temperatur > 15 ^t > 16
+                 ^windstaerke < 4 ^ws > 8 ^luftfeuchtigkeit > 60
+                 ^jahreszeit << s fh >> )
+         { <result> (wetter ^zeit (compute <timev> + 2 ) ^temperatur <temp>
+          ^t { < 44 <tc> } ^r { < 43 <rc> } ^regen <reg> ^luftdruck <lufd> ) }
+         (rcontr ^rulen s-gewitter ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^temperatur (compute <temp> - 5 ) ^t (compute <tc> +
+                 16 ) ^regen (compute <reg> + 19 ) ^r (compute <rc> + 19 )
+                 ^luftdruck (compute <lufd> - 1 ) ^wolkentyp cb )
+         (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time ac/as-grosse-hitze=gewitter
+                 ^status 43 ) (bind <z> (compute <timev> + 2 ) )
+         (make feuer ^att temperatur ^time <z> ^text
+         |Sommer-gewitter: wegen dem Regen wird es schnell kaelter.| )
+         (make feuer ^att regen ^time <z> ^text
+         |Ac,grosse Hitze,hohe Feuchte->Gewitter mit Niederschlaegen.| )
+         (make feuer ^att luftdruck ^time <z> ^text
+         |Gewitter bringt fallenden Luftdruck mit sich.| )
+         (make feuer ^att wolkentyp ^time <z> ^text
+         |Auf Ac folgt bei grosser Hitze,Feuchte oft Cumulonimbus.| )
+)
+
+
+;                           * * LUFTDRUCK * *
+
+(p tief-luftdruck                   ;tiefer luftdruck->morgen sicher nicht 1045
+         (next-group ^gtask prognose )
+         (wetter ^zeit << 1 3 >> ^zeit <timev> ^luftdruck { < 998 <luftdd>
+         } ^ld > 29 )
+         { <result> (wetter ^zeit (compute <timev> + 2 ) ^luftdruck <lufd>
+                 ^ld { < 40 <lufc> } ) }
+
+         (rcontr ^rulen tied-ld ^count { < 2 <countv> } ^basis <> <timev> )
+        -->
+         (modify <result> ^luftdruck (compute( <lufd> + <luftdd> ) // 2)
+                 ^ld (compute <lufc> + 10 ) )
+         (modify 4 ^count (compute <countv> + 1 ) ^basis <timev> )
+         (make next-rule ^rtask indicate ^time tiefer-luftdruck ^status 16 )
+         (make feuer ^att luftdruck ^time (compute <timev> + 2 )
+         ^text |Ziemlich tiefer Luftdruck = morgen sicher nicht 1045mb| )
+)
+(p gleichbleibend-hoch-luftdruck          ;druck auch in zukunft aehnlich
+        (next-group ^gtask prognose )   ;,stabile wetterlage
+        (wetter ^zeit 1 ^luftdruck <lufd1> ^ld > 19 )
+        (wetter ^zeit 3 ^luftdruck = <lufd1> ^ld > 19 )
+        { <result> (wetter ^zeit 5 ^ld { <ldc> < 22 } ^luftdruck <lufd2> ) }
+        (rcontr ^rulen gleich-hoch-ld ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute ( <lufd1> + <lufd2> ) // 2 )
+                 ^ld (compute <ldc> + 18 ) )
+        (modify 5 ^count 1 )
+        (make next-rule ^rtask indicate ^time gleichbleibend-hoher-luftdruck
+                 ^status 17 )
+        (make feuer ^att luftdruck ^time 5
+        ^text |Luftdruck veraendert sich nicht.Auch nicht in Zukunft| )
+)
+(p stetig-steigend-luftdruck              ;wetterverbesserung
+        (next-group ^gtask prognose )
+        (wetter ^zeit 1 ^ld > 19 )
+        (wetter ^zeit 3 ^ld > 19 )
+        (tendenz ^1-3-luftdruck >= 4 )
+        { <result> (wetter ^zeit 5 ^ld { <ldc> < 22 } ^luftdruck <lufd2> ) }
+        (rcontr ^rulen stetig-steigend-ld ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute <lufd2> + 3 ) ^ld
+                 (compute <ldc> + 18 ) )
+        (modify 6 ^count 1 )
+        (make next-rule ^rtask indicate ^time stetig-steigender-luftdruck
+                 ^status 18 )
+        (make feuer ^att luftdruck ^time 5 ^text
+        |Luftdruck steigt stetig ,darum wird er in Zukunft hoeher sein| )
+)
+(p langsam-stetig-steigend-luftdruck         ;wetterverbesserung
+        (next-group ^gtask prognose )
+        (wetter ^zeit 1 ^ld > 19 )
+        (wetter ^zeit 3 ^ld > 19 )
+        (tendenz ^1-3-luftdruck { > 1 < 4 } )
+        { <result> (wetter ^zeit 5 ^ld { <ldc> < 22 } ^luftdruck <lufd2> ) }
+        (rcontr ^rulen lngs-stetig-steig-ld ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute <lufd2> + 1 ) ^ld
+                 (compute <ldc> + 18 ) )
+        (modify 6 ^count 1 )
+        (make next-rule ^rtask indicate ^time langsam-steigender-luftdruck
+                 ^status 19 )
+        (make feuer ^att luftdruck ^time 5 ^text
+        |Luftdruck steigt langsam-stetig,darum ist er hoeher in 6-12h| )
+)
+(p fallend-luftdruck
+        (next-group ^gtask prognose )
+        (wetter ^zeit 1 ^ld > 19 ^luftdruck <lufd1> )
+        (wetter ^zeit 3 ^ld > 19 ^luftdruck { < <lufd1> <lufd3> } )
+
+        { <result> (wetter ^zeit 5 ^ld { <ldc> < 20 } ^luftdruck <lufd5> ) }
+        (rcontr ^rulen fallend-luftdruck ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute <lufd5> - ( <lufd1> - <lufd3> )
+                 ) )
+         (modify 5 ^count 1 )
+         (make next-rule ^rtask indicate ^time luftdruck-fallend ^status 52 )
+         (make feuer ^att luftdruck ^time 5 ^text
+         |Luftdruck faellt, darum ist er 6-12 Stunden spaeter tiefer.| )
+)
+(p starkfallend-luftdruck               ;druck faellt mehr als 1mb/h -->sturm
+         (next-group ^gtask prognose )
+         (wetter ^zeit 2 ^ld > 29 )
+         (wetter ^zeit 3 ^ld > 29 )
+         (tendenz ^2-3-luftdruck < -1 )
+         { <result> (wetter ^zeit 4 ^luftdruck <lufd2> ^ld { < 70 <ld2> }
+                 ^regen <regen> ^r { < 80 <r2> }
+                 ^windstaerke <wins> ^ws { < 80 <ws2> } ) }
+         (rcontr ^rulen starfal-ld ^count < 1 )
+        -->
+         (modify <result> ^luftdruck (compute <lufd2> - 1 ) ^ld (compute
+                 <ld2> + 20 ) ^regen (compute <regen> + 20 ) ^r (compute
+                 <r2> + 20 ) ^windstaerke (compute <wins> + 2 ) ^ws
+                 (compute <ws2> + 30 ) )
+         (modify 6 ^count 1 )
+         (make next-rule ^rtask indicate ^time stark-fallender-luftdruck
+                 ^status 20 )
+         (make feuer ^att luftdruck ^time 4 ^text
+         |Luftdruck stark fallend --> schon nach 1/2-3h deutlich tiefer| )
+        (make feuer ^att regen ^time 4 ^text
+         |Luftdruck faellt mehr als 1mb/h was Sturm mit Regen bedeutet | )
+
+        (make feuer ^att windstaerke ^time 4 ^text
+         |Luftdruck faellt mehr als 1mb/h was Sturm mit viel Wind bed.| )
+)
+(p hoch-luftdruck-impl                          ;bei hohem luftdruck eher wenig
+        (next-group ^gtask prognose-impl )    ;niederschlaege und wolken
+                                           ;(nur wenn ^regen und ^wolkendichte
+                                                ; wenig bestimmt)
+        (wetter ^luftdruck > 1015 ^ld > 25 ^wd { < 10 <wdc> }
+                  ^wolkendichte { > 3 <wd> } ^zeit <t>
+                  ^r { < 12 <rc> } ^regen { > 8 <re> } )
+        -->
+        (modify 2 ^regen (compute <re> - 15 ) ^r (compute <rc> + 15 )
+                 ^wolkendichte (compute <wd> - 1 ) ^wd (compute <wdc> + 15 ) )
+        (make next-rule ^rtask indicate ^time hoch-luftdr.-impl ^status 21 )
+        (make feuer ^att regen ^time <t> ^text
+         |Bei hohem Luftdruck eher wenig Niederschlaege | )
+        (make feuer ^att wolkendichte ^time <t> ^text
+         |Bei hohem Luftdruck eher wenig Wolken| )
+)
+(p tief-luftdruck-impl             ;bei TD eher viel wolken und niederschlaege
+                                   ;(nur wenn ^regen und ^wolkendichte wenig
+                                   ; bestimmt)
+        (next-group ^gtask prognose-impl )
+        (wetter ^luftdruck < 1000 ^ld > 25 ^wd { < 10 <wdc> }
+                 ^wolkendichte { < 3 <wd> } ^zeit <t>
+                 ^r { < 10 <rc> } ^regen { < 13 <re> } )
+        -->
+        (modify 2 ^regen (compute <re> + 15 ) ^r (compute <rc> + 15 )
+                 ^wolkendichte (compute <wd> + 1 ) ^wd (compute <wdc> + 15 ) )
+        (make next-rule ^rtask indicate ^time tief-luftdr.-impl ^status 22 )
+        (make feuer ^att regen ^time <t> ^text
+         |Bei tiefem Luftdruck eher viele Niederschlaege| )
+        (make feuer ^att wolkendichte ^time <t> ^text
+         |Bei tiefem Luftdruck eher viele Wolken| )
+)
+(p zunahme-wolkendichte                   ;allgemein TD-einfluss
+        (next-group ^gtask prognose )
+        (wetter ^zeit 2 ^wd > 28 )
+        (wetter ^zeit 3 ^wd > 28 )
+        (tendenz ^2-3-wolkendichte > 1 )
+        { <result> (wetter ^zeit 4 ^luftdruck <lufd> ^ld { < 50 <ldc> }
+                 ^wolkendichte <woldi> ^wd { < 80 <wdc> } ) }
+        (rcontr ^rulen zunah-wd ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute <lufd> - 1 ) ^ld (compute
+                 <ldc> + 20 ) ^wolkendichte (compute <woldi> + 1 )
+                 ^wd (compute <wdc> + 20 ) )
+        (modify 6 ^count 1 )
+        (make next-rule ^rtask indicate ^time zunahme-der-wolkendichte
+                 ^status 23 )
+        (make feuer ^att luftdruck ^time 4 ^text
+        |Wolkendichte nimmt schnell stark zu,was ein Zeichen fuer fallenden|
+        (crlf) |Luftdruck ist.| )
+        (make feuer ^att wolkendichte ^time 4 ^text
+        |Wolkendichte nimmt schnell stark zu, deshalb wird es in| (crlf)
+        |Zukunft bedeckter sein.| )
+)
+(p abnahme-wolkendichte                 ;allgemein HD-einfluss
+        (next-group ^gtask prognose )
+        (wetter ^zeit 2 ^wd > 28 )
+        (wetter ^zeit 3 ^wd > 28 )
+        (tendenz ^2-3-wolkendichte < -1 )
+        { <result> (wetter ^zeit 4 ^luftdruck <lufd> ^ld { < 50 <ldc> }
+                 ^wolkendichte <woldi> ^wd { < 80 <wdc> } ) }
+        (rcontr ^rulen abnah-wd ^count < 1 )
+        -->
+        (modify <result> ^luftdruck (compute <lufd> + 1 ) ^ld (compute
+                 <ldc> + 20 ) ^wolkendichte (compute <woldi> - 1 )
+                 ^wd (compute <wdc> + 20 ) )
+        (modify 6 ^count 1 )
+        (make next-rule ^rtask indicate ^time abnahme-der-wolkendichte
+                 ^status 24 )
+        (make feuer ^att luftdruck ^time 4 ^text
+        |Wenn es in solch kurzer starke Wolkenauflockerungen gibt, so ist|
+        (crlf) |das ein Zeichen fuer Hochdruckeinfluss.| )
+        (make feuer ^att wolkendichte ^time 4 ^text
+        |Wolkendichte stark abnehmend, daher wird es in Zukunft| (crlf)
+        |heiterer sein.| )
+)
+(p tiefdruck-verdacht
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 1 2 3 >> ^zeit <timev> ^luftdruck < 1005
+                 ^ld { > 10 < 30 } ^ks < 1 )
+
+        (rcontr ^rulen tiefd-vd ^count { < 3 <couv> } )
+        -->
+        (write (crlf) |KONDENSSTREIFEN von Flugzeugen:| (crlf)
+        |(a) Dicht,sich nicht aufloesend(nur evtl.vom Winde verweht) | (crlf)
+        |(b) Loesen sich langsam auf| (crlf)
+         |  geben sie 'a','b' oder '?' ein : | )
+        (make verdacht ^time2 <timev> ^wetteratt kondensstreifen ^wert
+                 (accept) )                                   ; ^wert=j,oder n
+        (modify 3 ^count (compute <couv> + 1 ) )
+        (modify 2 ^ks 50 )
+        (make next-rule ^rtask indicate ^time
+                 pruefung-des--verdachts-kondensstreifen ^status 40 )
+)
+(p tiefdruck-verdacht-bestaetigt             ; einfluss einer warmfront
+        (next-group ^gtask prognose )
+        (verdacht ^time2 <z> ^wetteratt kondensstreifen ^wert a )
+        { <result> (wetter ^zeit <z> ^ld <ldc> ) }
+        -->
+        (remove 2 )
+        (modify <result> ^ld (compute <ldc> + 20 )
+                  ^kondensstreifen dicht )
+     (make next-rule ^rtask indicate ^time verdacht-bestaetigt ^status 40.2 )
+        (make feuer ^att luftdruck ^time <z> ^text
+        |Dichte Kondensstreifen deuten auf Einfluss einer Warmfront (TD)| )
+)
+(p tiefdruck-verdacht-nichtbestaetigt           ;=trockene obere Luftschichten
+        (next-group ^gtask prognose )         ; wenig wahrscheinlichkeit
+                                                ; fuer wetterverschlechterung
+        (verdacht ^time2 <z> ^wetteratt kondensstreifen ^wert b )
+        { <result> (wetter ^zeit <z> ^ld <ldc> ) }
+        -->
+        (remove 2 )
+        (modify <result> ^ld (compute <ldc> - 10 )
+                 ^kondensstreifen loesen-sich-auf )
+        (make next-rule ^rtask indicate ^time verdacht-nicht-bestaetigt
+                 ^status 40.3 )
+        (make feuer ^att luftdruck ^time <z> ^text
+        |Sich aufloesende Kondensstreifen=trockene obere Luftschichten,|
+
+        (crlf) |wenig wahrscheinlichkeit fuer Wetterverschlechterung.| )
+)
+;                * * * * REGEN * * * *
+(p wenn-es-regnet--muss-es--auch-wolken-haben
+        (next-group ^gtask prognose-impl )     ;nur wenn ^wolkendichte wenig
+        (wetter ^zeit <t> ^regen > 9 ^r > 11   ;bestimmt.braucht kein rcontr
+                 ^wolkendichte < 2 ^wd < 10 )   ;da ^wd in RHS erhoeht wird
+        -->
+        (modify 2 ^wolkendichte 3 ^wd 10 )
+        (make next-rule ^rtask indicate ^time regen=wolken ^status 50 )
+        (make feuer ^att wolkendichte ^time <t> ^text
+        |Wenn es Regnet muss es auch Wolken haben (Logisch, oder ?).| )
+)
+(p regen-->hohe-luftfeuchtigkeit              ; nur wenn Luftfeuchtigkeit
+        (next-group ^gtask prognose-impl )  ; wenig bestimmt
+        (wetter ^zeit <t> ^regen > 9 ^r > 11
+                 ^luftfeuchtigkeit < 50 ^lf < 10 )
+        -->
+        (modify 2 ^luftfeuchtigkeit 75 ^lf 10 )
+        (make next-rule ^rtask indicate ^time regen=hohe-luftfeuchtigkeit
+                 ^status 51 )
+        (make feuer ^att luftfeuchtigkeit ^time <t> ^text
+         |Wenn es regnet muss die Luftfeuchtigkeit hoch sein. | )
+)
+;                * * * * WIND * * * *
+(p winddrehung-windrichtung                 ;starke winddrehung bedeutet
+         (next-group ^gtask prognose )     ;allgemein wetterumschlag
+       -(tendenz ^1-3-windrichtung { > -100 <= 0 } )
+       -(tendenz ^1-3-windrichtung { < 100 > 0 } )
+         (wetter ^zeit 1 ^wr > 26 )
+         (wetter ^zeit 3 ^wr > 18 )
+         { <result> (wetter ^zeit 5 ^luftdruck <ldr> ^ld { < 40 <ldc> }
+                 ^windstaerke <winst> ^ws { < 30 <wsc> } ) }
+         { <counter> (rcontr ^rulen winddre-w ^count < 1 ) }
+        -->
+         (modify <result> ^luftdruck (compute <ldr> - 1 ) ^ld (compute
+        <ldc> + 10 ) ^windstaerke (compute <winst> + 1 ) ^ws (compute <wsc>
+        + 10 ) )
+         (modify <counter> ^count 1 )
+        (make next-rule ^rtask indicate ^time winddrehung-schlechtwetter?
+                 ^status 25 )
+        (make feuer ^att luftdruck ^time 5 ^text
+         |Starker Windrichtungswechsel deutet auf nahendes TD-Gebiet.| )
+        (make feuer ^att windstaerke ^time 5 ^text
+         |Starker Windrichtungswechsel bringt Wetterumschwung,auffrischenden|
+        (crlf) |Wind.| )
+)
+(p wind-auffrischend
+        (next-group ^gtask prognose )
+        (wetter ^zeit 2 ^windstaerke <wnds2> )
+        (wetter ^zeit 3 ^windstaerke { > <wnds2> <wnds3> } )
+       { <result> (wetter ^zeit 4 ^windstaerke <wnds4> ^ws { < 20 <wsc> } ) }
+        (rcontr ^rulen windstaerke ^count <> 1 )
+        -->
+        (modify <result> ^windstaerke (compute <wnds4> + 1 )
+                          ^ws (compute <wsc> + 18 ) )
+        (modify 5 ^count 1 )
+        (make next-rule ^rtask indicate ^time wind-auffrischend ^status 48 )
+        (make feuer ^att windstaerke ^time 4 ^text
+        |Wind ist auffrischend, hoehere Windstaerke in Zukunft.| )
+)
+(p wind-abflauend
+
+        (next-group ^gtask prognose )
+        (wetter ^zeit 2 ^windstaerke <wnds2> )
+        (wetter ^zeit 3 ^windstaerke { < <wnds2> <wnds3> } )
+       { <result> (wetter ^zeit 4 ^windstaerke <wnds4> ^ws { < 20 <wsc> } ) }
+        (rcontr ^rulen windstaerke2 ^count <> 1 )
+        -->
+        (modify <result> ^windstaerke (compute <wnds4> - 1 )
+                          ^ws (compute <wsc> + 18 ) )
+        (modify 5 ^count 1 )
+        (make next-rule ^rtask indicate ^time wind-abflauend ^status 49 )
+        (make feuer ^att windstaerke ^time 4 ^text
+        |Wind ist abflauend, weniger Wind in Zukunft.| )
+)
+(p windzunahme-mo-mi-verdacht
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 3 5 >> ^zeit <timev> ^regen < 10 ^r { > 8 < 22 }
+                 ^wolkendichte < 2 ^wd { > 8 < 23 } ^nebel < 10
+                 ^n < 10 ^wz < 50 )
+         (rcontr ^rulen wizu-momi-vd ^count { < 2 <couv> } )
+         (wetter ^zeit (compute <timev> - 2 ) ^zeit-sym <t> )
+         -->
+         (write (crlf) |Nimmt( oder nahm )der Wind vor| <t> |Stunden|
+          (crlf) |vom Morgen zum Mittag hin zu? j,n :| )
+         (make verdacht ^time2 <timev> ^wetteratt wind-mo-mi
+                 ^wert (accept) )
+         (modify 2 ^wz 100 )
+         (modify 3 ^count (compute <couv> + 1 ) )
+         (make next-rule ^rtask indicate ^time wind-nimmt-mo-mi-zu-verdacht
+                 ^status 26 )
+)
+(p winzunahme-mo-mi-verdacht-bestaetigt
+         (next-group ^gtask prognose )
+         (verdacht ^time2 <t> ^wetteratt wind-mo-mi ^wert j )
+         { <result> (wetter ^zeit <t> ^r <rc> ^wd <wdc>
+                 ^n <nc> ) }
+         -->
+         (remove 2 )
+         (modify <result> ^r (compute <rc> + 14 ) ^n (compute <nc> + 14 )
+                 ^wd (compute <wdc> + 13 ) ^windzunahme mo-mi )
+         (make next-rule ^rtask indicate ^time wind-mo-mi-verdacht-bestaetigt
+                 ^status 26.2 )
+         (make feuer ^att regen ^time <t> ^text
+         |Wenn der Wind vom Morgen zum Mittag hin zunimmt ist kein Regen|
+         | zu erwarten| )
+         (make feuer ^att nebel ^time <t> ^text
+         |Wenn der Wind vom Morgen zum Mittag hin zunimmt wird es wenig|
+         | Nebel haben.| )
+         (make feuer ^att wolkendichte ^time <t> ^text
+         |Wenn der Wind vom Morgen zum Mittag hin zunimmt wird es schoenes|
+         | Wetter mit weniger Wolken.| )
+)
+(p windzunahme-mi-ab-verdacht
+         (next-group ^gtask prognose )
+         (wetter ^zeit << 3 5 >> ^zeit <timev> ^regen > 10 ^r > 8
+              ^wolkendichte > 3 ^wd { > 8 < 20 }
+                 ^windstaerke > 3 ^ws { > 8 < 20 } ^wz < 50 )
+         (rcontr ^rulen wind-miab-vd ^count { < 2 <couv> } )
+         (wetter ^zeit (compute <timev> - 2 ) ^zeit-sym <zeit> )
+         -->
+         (write (crlf) |Nimmt der Wind vor| <zeit> |Stunden|
+           (crlf) |vom Mittag zum Abend zu? j,n :| )
+         (make verdacht ^time2 <timev> ^wetteratt
+                 wind-mi-ab ^wert (accept) )
+         (modify 2 ^wz 100 )
+         (modify 3 ^count (compute <couv> + 1 ) )
+         (make next-rule ^rtask indicate ^time verdacht-wind-nimmt-mi-ab-zu
+                 ^status 28 )
+)
+(p windzunahme-mi-ab-verdacht-bestaetigt
+         (next-group ^gtask prognose )
+         (verdacht ^time2 <t> ^wetteratt wind-mi-ab ^wert j )
+         { <result> (wetter ^zeit <t> ^r <rc> ^wd <wdc>
+                 ^ws <wsc> ) }
+
+         -->
+        (remove 2 )
+        (modify <result> ^r (compute <rc> + 14 ) ^wd (compute <wdc> + 14 )
+                 ^ws (compute <wsc> + 14 ) ^windzunahme mi-ab )
+        (make next-rule ^rtask indicate ^time wind-mi-ab-verdacht-bestaetigt
+                 ^status 28.2 )
+        (make feuer ^att regen ^time <t> ^text
+         |Windzunahme Mittag-Abend bringt Schlechtwetter und Regen.| )
+        (make feuer ^att wolkendichte ^time <t> ^text
+        |Windzunahme Mittag-Abend bringt Schlechtwetter,bedeckt.| )
+        (make feuer ^att windstaerke ^time <t> ^text
+        |Windzunahme Mittag-Abend bringt Schlechtwetter,Sturm.| )
+)
+;                * * * * NEBEL * * * *
+(p hartnaeckiger-nebel                ;viel nebel bedeutet regnerisches wetter
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 1 3 >> ^zeit <timev> ^nebel > 25 ^n > 35 )
+        { <result> (wetter ^zeit (compute <timev> + 2 ) ^r { < 33 <rc> }
+                 ^regen <reg> ) }
+        (rcontr ^rulen hartn-nebel ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (modify <result> ^regen (compute <reg> + 18 ) ^r (compute <rc>
+                 + 11 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time starker-nebel->regen
+                 ^status 30 )
+        (make feuer ^att regen ^time (compute <timev> + 2 ) ^text
+        |Hartnaeckiger Nebel bringt Regen. | )
+)
+(p nur-morgen-nebel                     ;normal,bringt gutes wetter
+        (next-group ^gtask prognose )
+        (wetter ^zeit << 1 3 >> ^zeit <timev> ^nebel < 13 ^n > 36
+                 ^zeit-sym <zeit> )
+        (wetter ^zeit (compute <timev> + 2 ) ^r < 15 )
+        (rcontr ^rulen morgen-nebel ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf)|War das nur Morgennebel vor|
+                 <zeit> |Stunden ? J/N : | )
+        (make verdacht ^time2 <timev> ^wetteratt neb ^wert (accept) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time nachfrage-morgennebel
+         ^status 31 )
+)
+(p nur-morgen-nebel-bestaetigt
+        (next-group ^gtask prognose )
+        (verdacht ^time2 <timev> ^wetteratt neb ^wert j )
+        { <result> (wetter ^zeit (compute <timev> + 2 ) ^r <rc>
+                 ^regen <reg> ) }
+        -->
+        (remove 2 )
+        (make next-rule ^rtask indicate ^time nur-morgen-nebel->schoen
+                 ^status 31.2 )
+        (make feuer ^att regen ^time (compute <timev> + 2 ) ^text
+        |Ein wenig Morgennbel ist ein Schoenwetterbote,kein Regen.| )
+        (modify <result> ^regen (compute <reg> - 10 ) ^r (compute <rc>
+                 + 11 ) )
+)
+;                        * * * * TAU/LUFTFEUCHTIGKEIT * * * *
+(p starker-tau-verdacht
+         (next-group ^gtask prognose )
+         (wetter ^zeit 1 ^temperatur > 22 ^t > 24 ) ;nach warmen tagen starker
+         (wetter ^zeit 3 ^temperatur > 22 ^t > 24 ) ;tau=schoenes wetter.wenn
+         (rcontr ^rulen st-tau-vd ^count < 1 )      ;der tau fehlt=regen
+        -->
+         (write (crlf) |Hatte es heute Morgen (S)tarken Tau,oder (F)ehlte|
+                 | er ?: | )
+         (make verdacht ^wetteratt morgentau ^wert (accept) )
+         (modify 4 ^count 1 )
+         (make next-rule ^rtask indicate ^time information-ueber-tau-noetig
+                 ^status 32 )
+)
+(p starker-tau-verdacht-bestaetigt
+         (next-group ^gtask prognose )
+         (verdacht ^wetteratt morgentau ^wert s )
+         (wetter ^zeit 5 ^t <tc> ^wolkendichte <wolk> ^wd { < 40 <wdc> }
+                ^temperatur <temp> )
+         -->
+         (modify 3 ^t (compute <tc> + 10 ) ^temperatur (compute <temp> +
+                 2 ) ^wolkendichte (compute <wolk> - 1 ) ^wd (compute
+                 <wdc> + 14 )  )
+        (remove 2 )
+        (make next-rule ^rtask indicate ^time tau-verdacht-bestaetigt
+                 ^status 32.2 )
+        (make feuer ^att temperatur ^time 5 ^text
+         |Starker Tau nach warmen Tagen: weiterhin schoen,warm.| )
+        (make feuer ^att wolkendichte ^time 5 ^text
+         |Starker Tau nach warmen Tagen: weiterhin schoen,heiter.| )
+)
+(p starker-tau-verdacht-nicht-bestaetigt
+        (next-group ^gtask prognose )
+        (verdacht ^wetteratt morgentau ^wert f )
+        (wetter ^zeit 5 ^r { < 30 <rc> } ^regen <reg> )
+        -->
+        (modify 3 ^regen (compute <reg> + 11 ) ^r (compute <rc> + 15 ) )
+        (remove 2 )
+        (make next-rule ^rtask indicate ^time tau-verdacht-bestaetigt
+                 ^status 32.3 )
+        (make feuer ^att regen ^time 5 ^text
+         |Fehlender Tau nach warmen Tagen bringt Regen.| )
+)
+(p luftfeuchtigkeit-1-3-5-berechnen      ; wenn absolute feuchte etwa konstant
+        (next-group ^gtask prognose-impl )
+        (wetter ^zeit << 1 3 >> ^zeit <timev> ^temperatur <temp>
+                         ^luftfeuchtigkeit <luff> ^t > 13 ^lf > 13 )
+        (wetter ^zeit (compute <timev> + 2 ) ^temperatur { <temp2> > 10 }
+                 ^lf { < 31 <lfc> } )
+        (rcontr ^rulen luftfeuchte ^count { < 2 <couv> } ^basis <> <timev> )
+        -->
+
+        (bind <abs-feuchte> (compute ( <temp> + 2 ) * <luff> ) )
+        (modify 3 ^luftfeuchtigkeit (compute <abs-feuchte> // ( <temp2> + 2 )
+               ) ^lf (compute <lfc> + 18 ) )
+        (modify 4 ^count (compute <couv> + 1 ) ^basis <timev> )
+        (make next-rule ^rtask indicate ^time luftfeuchtigkeit-berechnen
+                 ^status 35 )
+        (make feuer ^att luftfeuchtigkeit ^time (compute <timev> + 2 ) ^text
+         |Luftfeuchtigkeit berechnet aus abs. Feuchte der Vergangenheit|
+        (crlf) |und Temperatur.| )
+)
+(p luftfeuchtigkeit-ueber-100%        ;=niederschlag in form von nebel
+        (next-group ^gtask prognose-impl )
+        (wetter ^zeit <timev> ^luftfeuchtigkeit > 100 ^lf > 10
+        ^n { < 21 <nc> } ^nebel <neb> )
+        (rcontr ^rulen ueber-100% ^count { < 5 <couv> } )
+        -->
+        (modify 2 ^nebel (compute <neb> + 17 ) ^n (compute <nc> + 21 ) )
+        (modify 3 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate ^time luft=wassergesaettigt->nebel
+                 ^status 36 )
+        (make feuer ^att nebel ^time <timev> ^text
+         |Luft ist Wassergesaettigt (ueber 100% rel. lf)--> Ueberschuss|
+        (crlf) |kondensiert als Nebel.| )
+)
+;                * * * * WETTERLAGEN * * * *
+(p sued-wetterlage                 ;mittelmeerklima,warm,trocken
+        (next-group ^gtask prognose )
+        (wetter ^windrichtung { < 215 > 145 } ^wr > 27
+                 ^luftfeuchtigkeit < 40 ^lf > 27 ^regen < 15 ^r > 27
+                 ^wolkendichte < 3 ^wd > 27 ^wetterlage <> sued )
+        (rcontr ^rulen sued-wl ^count { < 5 <couv> } )
+;      --- koennen hoechstens 6* ausgefuehrt werden -------
+        -->
+        (modify 2 ^wetterlage sued ^wl 50 )
+        (modify 3 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate ^time sued-wetterlage-identifiziert
+                 ^status 37 )
+)
+(p nord-wetterlage                ;arktische kaltluft,schauer 'aprilwetter'
+        (next-group ^gtask prognose )
+        { <result> (wetter ^zeit <t> ^temperatur < 5 ^t > 27 ^regen > 30
+        ^r > 27 ^wr > 27 ^wetterlage <> nord ) }
+       -(wetter ^zeit <t> ^windrichtung { > 40 < 300 } )
+        { <rcon> (rcontr ^rulen nord-wl ^count { < 5 <couv> } ) }
+        -->
+        (modify <result> ^wetterlage nord ^wl 50 )
+        (modify <rcon> ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate ^time nord-wetterlage-identifiziert
+                 ^status 38 )
+)
+(p west-wetterlage              ;vor allem FH,W wechselhaft,niederschlaege
+        (next-group ^gtask prognose )
+        (wetter ^regen > 20 ^r > 8 ^wolkendichte > 3 ^wd > 16
+                 ^windrichtung { > 225 < 300 } ^wr > 30 ^wetterlage <> west )
+        (rcontr ^rulen west-wl ^count { < 5 <couv> } )
+        -->
+        (modify 2 ^wetterlage west ^wl 50 )
+        (modify 3 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate ^time west-wetterlage-identifiziert
+                 ^status 39 )
+)
+(p hochdruck-wetterlage-sommer            ;wenig wolken,niederschlaege
+         (next-group ^gtask prognose )
+         (wetter ^zeit 1 ^luftdruck > 1021 )
+         (wetter ^zeit 3 ^luftdruck > 1021 ^jahreszeit << S FH >> )
+         (wetter ^wolkendichte < 4 ^wd > 10 ^wetterlage <> hochdruck )
+        (rcontr ^rulen hd-wl-s ^count { < 5 <couv> } )
+        -->
+        (modify 3 ^wetterlage hochdruck ^wl 50 )
+        (modify 4 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate
+                 ^time hochdruck-wetterlage-identifiziert ^status 45 )
+)
+(p hochdruck-wetterlage-winter          ;bodennebel im winter, Stratus-wolken
+        (next-group ^gtask prognose )
+        (wetter ^zeit 1 ^luftdruck > 1021 )
+        (wetter ^zeit 3 ^luftdruck > 1021 ^jahreszeit W )
+        (wetter ^nebel > 20 ^n > 17 ^wolkentyp << k '?' st ? >>
+                 ^wetterlage <> hochdruck )
+        (rcontr ^rulen hd-wl-w ^count { < 5 <couv> } )
+        -->
+        (modify 3 ^wetterlage hochdruck ^wl 50 )
+        (modify 4 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate
+                 ^time hochdruck-wetterlage-identifiziert ^status 46 )
+)
+(p flache-druckverteilung-wetterlage-sommer    ;gewittergefaehrlich
+        (next-group ^gtask prognose )
+        (wetter ^zeit 1 ^luftdruck { > 1005 < 1020 } ^wolkentyp << k cu ac cb
+                 >> )
+        (wetter ^zeit 3 ^luftdruck { > 1005 < 1020 } ^jahreszeit S )
+        (wetter ^wetterlage <> flache-druckverteilung )
+        (rcontr ^rulen fl-df-wl ^count { < 5 <couv> } )
+        -->
+        (modify 4 ^wetterlage flache-druckverteilung ^wl 50 )
+        (modify 5 ^count (compute <couv> + 1 ) )
+        (make next-rule ^rtask indicate
+                 ^time flache-druckverteilung-wetterlage ^status 47 )
+)
+
+
+;                * * * KORREKTUR VON ZU GR., ZU KL. WERTEN * * *
+;                *                                             *
+;                * * * * * * * * * * * * * * * * * * * * * * * *
+
+(p ld-correct1
+
+        (wetter ^luftdruck > 1050 )
+        -->
+        (modify 1 ^luftdruck 1050 )
+)
+(p ld-correct2
+        (wetter ^luftdruck < 950 )
+        -->
+        (modify 1 ^luftdruck 950 )
+)
+(p wr-correct1
+         (wetter ^windrichtung { > 360 <wr> } )
+        -->
+         (modify 1 ^windrichtung (compute <wr> - 360 ) )
+)
+(p wr-correct2
+        (wetter ^windrichtung { < 0 <wr> } )
+        -->
+        (modify 1 (compute <wr> + 360 ) )
+)
+(p ws-correct1
+        (wetter ^windstaerke > 12 )
+        -->
+        (modify 1 ^windstaerke 12 )
+)
+(p ws-correct2
+        (wetter ^windstaerke < 0 )
+        -->
+        (modify 1 ^windstaerke 0 )
+)
+(p nb-correct1
+        (wetter ^nebel > 50 )
+        -->
+        (modify 1 ^nebel 50 )
+)
+(p nb-correct2
+        (wetter ^nebel < 0 )
+        -->
+        (modify 1 ^nebel 0 )
+)
+(p wd-corrrect1
+        (wetter ^wolkendichte > 6 )
+        -->
+        (modify 1 ^wolkendichte 6 )
+)
+(p wd-correct2
+        (wetter ^wolkendichte < 0 )
+        -->
+        (modify 1 ^wolkendichte 0 )
+)
+(p r-correct1
+        (wetter ^regen > 50 )
+        -->
+        (modify 1 ^regen 50 )
+)
+(p r-correct2
+        (wetter ^regen < 0 )
+        -->
+        (modify 1 ^regen 0 )
+)
+;             * * * * * REGELN zur AUSGABE IN SAETZEN (analyse) * * * * *
+; (^gtask=ausgabe ,werden von ENDE-AUSGABE freigegeben )
+;drucken eine Schlussfolgerung aus, sobald genuegend gesicherte Daten
+;zur verfuegung stehen (attribute mit gewisser Bestimmtheit)
+(p regen-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^regen > 15 ^regen < 40
+                          ^r > 10 )
+
+         (rcontr ^rulen reg-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+         (write (crlf) |Moeglicherweise wird es in| <timev> |Stunden|
+                          | regnen.( Sorry,Regenschirm einpacken).| )
+         (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p keinregen-vorhersage
+         (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+         (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^regen < 5 ^r > 10 )
+         (rcontr ^rulen kreg-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+         (write (crlf) |Regen ist ziemlich Unwahrscheinlich in| <timev>
+                 |Stunden.Glueckwunsch!| )
+         (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p regen-vorhersage-warnung
+         (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^regen > 39 ^r > 17 )
+          (rcontr ^rulen reg-vorhs-w ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Sehr wahrscheinlich wird es in| <timev> |Stunden|
+                 | in Stroemen giessen.| (crlf) |(Arche bauen!)| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p wind-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^windstaerke <wis> ^ws > 15
+                 ^windrichtung <windr> )
+        (rcontr ^rulen wind-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Die Windstaerke in| <timev> |Stunden wird ca.| (crlf)
+                         <wis> |Beaufort betragen.(Richtung| <windr> |)| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p wind-vorhersage-warnung
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^windstaerke > 9 ^ws > 15 )
+       (rcontr ^rulen wind-vorhs-w ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Es ist Sturm zu erwarten in| <timev> |Stunden.| (crlf)
+        |(Segel reffen,Daecher festbinden,Baeume abschreiben).| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p temperatur-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^temperatur <tmp> ^t > 15 )
+        (rcontr ^rulen tmp-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Die Lufttemperatur wird in| <timev> |Stunden |
+                 |ca.| <tmp> |betragen.| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p temperatur-vorhersage-warnung-heiss
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+         (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^temperatur > 40 ^t > 13 )
+         (rcontr ^rulen tmp-vorhs-w ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+         (write (crlf) |Es wird sehr heiss werden in| <timev> |Stunden.| )
+         (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p temperatur-vorhersage-warnung-kalt
+         (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^temperatur < 0 ^t > 12 )
+       (rcontr ^rulen tmp-vorhs-wk ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Achtung Frostgefahr in| <timev> |Stunden.| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p wolkendichte/typ-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^wolkendichte <wold>
+                 ^wolkentyp <wolt> ^wd > 15 ^wt > 15 )
+       (rcontr ^rulen wold/t-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |In| <timev> |Stunden wird es| <wolt> |-Wolken der|
+                 | Dichte| <wold> |haben| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p gewitter.blitz.donner-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^wolkentyp cb ^wt > 13
+                 ^wolkendichte > 2 )
+        (rcontr ^rulen gewitter-vorhs ^basis <> <timev> )
+        -->
+        (write (crlf)|In| <timev> |Stunden wird es Gewitter mit Blitz und|
+                 | Donner geben.| )
+        (modify 4 ^basis <timev> )
+)
+(p schnee-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^regen > 22 ^r > 12
+                 ^temperatur < 0 ^t > 12 )
+       (rcontr ^rulen schnee-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Schnee ist moeglich in| <timev> |Stunden.| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p kein-nebel-vorhersage
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^nebel < 5 ^n > 12 )
+       (rcontr ^rulen knebel-vorhs ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+        (write (crlf) |Die Luft wird klar sein in| <timev> |Stunden.| )
+        (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p nebel-vorhersage-warnung
+
+        (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        (wetter ^zeit << 4 5 >> ^zeit-sym <timev> ^nebel > 34 ^n > 15 )
+         (rcontr ^rulen nebel-vorhs-w ^count { < 20 <couv> } ^basis <> <timev> )
+        -->
+          (write (crlf) |Sehr neblig wird es sein in| <timev> |Stunden.| )
+          (modify 4 ^count (compute <couv> + 10 ) ^basis <timev> )
+)
+(p wetterlage-melden
+          (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+          (wetter ^zeit << 3 4 5 >> ^wetterlage <wettlag> ^wl > 25 )
+          (rcontr ^rulen wettlage-vorhs ^count < 10 )
+        -->
+          (write (crlf) |Es ist momentan eine| <wettlag> |Wetterlage.| )
+          (modify 4 ^count 10 )
+)
+(p keine-weiteren-veraenderungen
+          (next-group ^gtask ausgabe ) (next-rule ^rtask bewert )
+        -->
+          (write (crlf) |Die uebrigen Wetterdaten werden sich nicht|
+                 | veraendern.| )
+)
+;                 * * * * * * * * * * * * * * * * * * *
+;                 * ENDE-FEUER         AUSGABE        *
+;                 * * * * * * * * * * * * * * * * * * *
+
+;Diese Regel feuert erst wenn keine weiteren Prognose-rules feuern koennen
+;(^gtask=ausgabe)
+;(man koennte auch eine sehr kleine LHS bilden,eine solche
+;Rule wuerde erst nach allen anderen feuern (specificity) )
+
+(P ENDEFEUER-AUSGABE
+            (next-group ^gtask ausgabe )
+         -->
+          (write (crlf) |Der Denkprozess ist beendet.| (crlf) (crlf)
+                  |Wuenschen Sie eine allgemeine Beurteilung(sofern moeglich),|
+          (crlf) |oder eine genaue Ausgabe der Ergebnisse ?|
+          (crlf) |Geben Sie 'B' oder 'E' ein (oder HELP) : | )
+          (make next-rule ^rtask BoderE ^status (accept) )
+)
+                              ;woertliche Aufbereitung der ergebnisse erwuenscht
+(p beurteilung-ergebnis
+          (next-rule ^rtask BoderE ^status b )
+        -->
+          (remove 1 )
+          (make next-rule ^rtask bewert )           ;gib schlussfolgerungsregeln
+)
+                               ;tabellarische ausgabe erwuenscht
+(p genaues-ergebnis
+        (next-rule ^rtask BoderE ^status e )
+        (rcontr ^rulen indicator ^count <times> )
+      (wetter ^zeit 4 ^luftdruck <ld1> ^windrichtung <wr1> ^windstaerke <ws1>
+      ^wetterlage <wl1> ^luftfeuchtigkeit <lf1> ^morgentau <mt1> ^nebel <ne1>
+            ^temperatur <t1> ^wolkendichte <wd1> ^wolkentyp <wt1> ^regen <r1>
+        ^ld <ldc1> ^wr <wrc1> ^ws <wsc1> ^lf <lfc1> ^mt <mtc1> ^n <nc1>
+        ^t <tc1> ^wd <wdc1> ^wt <wtc1> ^r <rc1> ^wl <wlc1> )
+      (wetter ^zeit 5 ^luftdruck <ld2> ^windrichtung <wr2> ^windstaerke <ws2>
+      ^wetterlage <wl2> ^luftfeuchtigkeit <lf2> ^morgentau <mt2> ^nebel <ne2>
+            ^temperatur <t2> ^wolkendichte <wd2> ^wolkentyp <wt2> ^regen <r2>
+        ^ld <ldc2> ^wr <wrc2> ^ws <wsc2> ^lf <lfc2> ^mt <mtc2> ^n <nc2>
+        ^t <tc2> ^wd <wdc2> ^wt <wtc2> ^r <rc2> ^wl <wlc2> )
+        -->
+        (remove 1 )
+        (write (crlf) |Aussage von| (compute <times> - 1 ) |Regeln:| )
+        (write (crlf) (crlf) |Wetterdaten in 30-180 Minuten :| (crlf) (crlf)
+        |Luftdruck:  | <ld1> (tabto 30) |Windrichtung:    | <wr1> (crlf)
+        |Windstaerke:| <ws1> (tabto 30) |Luftfeuchtigkeit:| <lf1> (crlf)
+        |Morgentau:  | <mt1> (tabto 30) |Nebel:           | <ne1> (crlf)
+        |Temperatur: | <t1> (tabto 30) |Wolkendichte:    | <wd1> (crlf)
+        |Wolkentyp:  | <wt1> (tabto 30) |Regen:           | <r1> (crlf) )
+      (bind <durch1> (compute ( ( <ldc1> + <wrc1> + <wsc1> + <lfc1> + <mtc1>
+        + <nc1> + <tc1> + <wdc1> + <wtc1> + <rc1> + <wlc1> ) // 11 ) + 50 ) )
+        (write (crlf) |Diese Vorhersage wird mit| <durch1> |%-iger |
+                      |Sicherheit eintreffen. | (crlf) )
+        (write (crlf) |Wetterdaten in 6-12 Stunden :| (crlf) (crlf)
+        |Luftdruck:  | <ld2> (tabto 30) |Windrichtung:    | <wr2> (crlf)
+        |Windstaerke:| <ws2> (tabto 30) |Luftfeuchtigkeit:| <lf2> (crlf)
+        |Morgentau:  | <mt2> (tabto 30) |Nebel:           | <ne2> (crlf)
+        |Temperatur: | <t2> (tabto 30) |Wolkendichte:    | <wd2> (crlf)
+        |Wolkentyp:  | <wt2> (tabto 30) |Regen:           | <r2> (crlf) )
+      (bind <durch2> (compute ( ( <ldc2> + <wrc2> + <wsc2> + <lfc2> + <mtc2>
+        + <nc2> + <tc2> + <wdc2> + <wtc2> + <rc2> + <wlc2> ) // 11 ) + 30 ) )
+        (write (crlf) |Diese Vorhersage wird mit| <durch2> |%-iger |
+                      |Sicherheit eintreffen. | (crlf) )
+      (write (crlf) |Wollen Sie die Gegenwart nochmals anschauen ? J,N : | )
+        (make next-rule ^rtask zeit3 ^status (accept) )
+)
+
+
+(p fehler-in-ausgabe
+        (next-rule ^rtask BoderE ^status { <> e <> b <> help }  )
+        -->
+        (remove 1 )
+        (write (crlf) |Nur B und E sind moeglich. Chicken! | (crlf)
+                |Sie duerfen noch mal : | )
+        (make next-rule ^rtask BoderE ^status (accept) )
+)
+
+(p print-zeit-3-fehler
+        (next-rule ^rtask zeit3 ^status { <> j <> n } )
+        -->
+        (remove 1 )
+        (write (crlf) |Nur 'J' und 'N' moeglich : | )
+        (make next-rule ^rtask zeit3 ^status (accept) )
+)
+
+(p print-zeit-3
+        (next-rule ^rtask zeit3 ^status j )
+        (wetter ^zeit 3 ^luftdruck <lufd> ^ld <ldc> ^windrichtung <wnds>
+        ^windstaerke <ws> ^ws <wsc> ^luftfeuchtigkeit <luf> ^lf <lfc>
+        ^morgentau <mot> ^mt <mtc> ^nebel <neb> ^n <nc> ^temperatur <temp>
+        ^t <tc> ^wolkendichte <woldi> ^wd <wdc> ^wolkentyp <woty> ^wt <wtc>
+        ^regen <reg> ^r <rc> ^wr <wrc> )
+        -->
+        (remove 1 )
+        (write (crlf)|Wetterdaten in der Gegenwart:| (crlf)
+        (crlf)|Luftdruck:  | <lufd> (tabto 30) |Windrichtung:    | <wnds>
+        (crlf)|Windstaerke:| <ws>   (tabto 30) |Luftfeuchtigkeit:| <luf>
+        (crlf)|Morgentau:  | <mot>  (tabto 30) |Nebel:           | <neb>
+        (crlf)|Temperatur: | <temp> (tabto 30) |Wolkendichte:    | <woldi>
+        (crlf)|Wolkentyp:  | <woty> (tabto 30) |Regen:           | <reg>
+        (crlf) )
+        (bind <durch> (compute  ( <ldc> + <wrc> + <wsc> + <lfc> + <mtc> +
+                <nc> + <tc> + <wdc> + <wtc> + <rc> ) // 11 ) )
+        (write (crlf) |Sicherheit=| <durch> |%.| (crlf)
+                | weiter mit -return- : | )
+        (bind <x> (acceptline) )
+)
+(p remove-keine-zeit3
+         (next-rule ^rtask zeit3 ^status n )
+        -->
+         (remove 1 )
+)
+;            * * * * * AUSGABE-ERKLAERUNG-QUIT-RERSTART  * * * * *
+;            *                (^gtask=dialog )                    *
+;            * * * * * * * * * * * * * * * * * * * * * * * * * * *
+(p menu:-quit-ausgabe-erklaerung-restart
+         (next-group ^gtask dialog )
+        -->
+         (write (crlf)
+                 (crlf) |Waehlen Sie: |
+         (crlf)|(Q)uit   (B)eurteilung   (E)rgebnis,tabellarisch (HELP)=hilfe|
+                 (crlf)|(U)ebersichtliche Erklaerung  (S)petzielle Erklaerung|
+                 (crlf)|(R)estart : | )
+         (make next-rule ^rtask dialog ^status (accept) )
+)
+(p reprint-ergebnis
+         (next-rule ^rtask dialog ^status E )
+        -->
+        (make next-rule ^rtask BoderE ^status E )
+)
+(p reprint-beurteilung
+        (next-rule ^rtask dialog ^status B )
+        -->
+        (make next-rule ^rtask remove-reinit )
+        (make next-rule ^rtask reinit-rcontrs )
+        (make next-rule ^rtask bewert )
+)
+        (p reinit-rcontrs
+                 (next-rule ^rtask reinit-rcontrs )
+                 (rcontr ^count > 9 )
+                 -->
+                 (modify 2 ^count 0 ^basis nil )
+        )
+        (p remove-reinitr
+                 (next-rule ^rtask remove-reinit )
+                 (next-rule ^rtask reinit-rcontrs )
+                 -->
+                 (remove 1 2 )
+        )
+(p restart
+        (next-rule ^rtask dialog ^status R )
+        -->
+        (make next-group ^gtask restart2 )
+        (make next-group ^gtask restart )
+)
+(p quit
+
+        (next-rule ^rtask dialog ^status q )
+        -->
+        (halt)
+)
+(p fehler-in-dialog
+         (next-rule ^rtask dialog ^status { <> e <> b <> q <> r  <> s <> u
+                 <> help <> help/e <> help/b <> help/q <> help r <> help/s
+                 <> help/u } )
+        -->
+        (remove 1 )
+        (write (crlf)|Na,na . Wer will denn so kurz vor dem Ende noch Fehler|
+                 | machen.| (crlf) |E , B , S , U und Q sind moeglich| (crlf)
+                 |(Wenn Sie nicht wissen warum,druecken sie Q )| (crlf) )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+;                * * * * ERKLAERUNGSKOMPONENTE * * * *
+;                *                                   *
+;                * * * * * * * * * * * * * * * * * * *
+(p erklaerung-erwuenscht                   ; gibt alle Erklaerungen aus
+        (next-rule ^rtask dialog ^status u )
+        (next-rule ^rtask erklaerung ^status <rulenr> ) ; rules die feuerten
+        (erklaer ^rulenr <rulenr> )         ; wm das Erkl.enthaelt
+        -->
+        (write (crlf) |Schlussfolgerung von Regel Nr.| <rulenr> (crlf)
+                 (substr 3 text inf ) )
+)
+(p erklaerung-im-detail-erwuenscht
+        (next-rule ^rtask dialog ^status s )
+        -->
+        (write (crlf) |Wollen Sie eine Erklaerung fuer die Wetterlage in |
+        (crlf)|1/2-3 Stunden (1) , oder fuer die W. in 6-12 Stunden (2), |
+        (crlf)|oder fuer die gegenwart (0) ? |
+        (crlf)|Waehlen Sie : | )
+        (bind <time> (accept) )
+        (write (crlf) |Fuer welches Attribut? |
+                 (crlf) |       LUFTDRUCK    WINDRICHTUNG |
+                 (crlf) |       WINDSTAERKE  LUFTFEUCHTIGKEIT |
+                 (crlf) |       NEBEL        TEMPERATUR |
+                 (crlf) |       WOLKENDICHTE WOLKENTYP |
+                 (crlf) |       REGEN        MORGENTAU |
+                 (crlf) |Waehlen Sie : | )
+        (make next-rule ^rtask all-feuer ^watt (accept) ^time <time> )
+)
+        (p erklaerung-im-detail-ausgabe
+                (next-rule ^rtask all-feuer ^watt <att> ^time <time> )
+                (feuer ^att <att> ^time (compute <time> + 3 ) )
+                -->
+                (write (crlf) (substr 2 text inf ) )
+        )
+        (p erklaerung-im-detail-ausgabe-aber-keine-erklaerungen-da
+                (next-rule ^rtask all-feuer ^watt <att> ^time <t>
+                ^watt << luftdruck windrichtung windstaerke luftfeuchtigkeit
+                nebel temperatur wolkendichte wolkentyp regen morgentau >>
+                ^time << 0 1 2 >> )
+                -(feuer ^att <att> ^time (compute <t> + 3 ) )
+                -->
+
+                (write (crlf)|Computer hatte keinen Grund zur Aenderung.| )
+        )
+         (p eingabefehler-in-erkl-im-det.-erw.
+                 (next-rule ^rtask all-feuer ^watt <a> ^time <t> )
+                 -(next-rule ^rtask all-feuer ^watt << luftdruck
+                         windrichtung windstaerke luftfeuchtigkeit
+                         nebel temperatur wolkendichte wolkentyp
+                    regen morgentau >> ^time << 0 1 2 >> ^time <t> ^watt <a> )
+                 -->
+                 (write (crlf)|FEHLER! Falsche Zeit oder Wetterattribut|
+                          (crlf)|Zeit (0,1 oder 2) : | )
+                 (bind <z> (accept) ) (write (crlf) |Attribut : | )
+                 (modify 1 ^time <z> ^watt (accept) )
+         )
+;                * * * * ZURUECK ZUM MENUE * * * *
+;                *         (^gtask re-dialog)      *
+;                * * * * * * * * * * * * * * * * *
+(p zurueck-zum-menue
+         (next-group ^gtask re-dialog )
+         (next-group ^gtask dialog )
+        -->
+        (remove 2 )
+        (make next-group ^gtask dialog )
+)
+;                * * * * * * HELP-TEXTE  * * * * * *
+;                *       (^gtask=help)               *
+;                * * * * * * * * * * * * * * * * * * *
+(p help-bestimmth-zeit
+        (next-rule ^rtask bestimmth-zeit ^status help )
+        -->
+        (remove 1 )
+        (write (crlf)
+        (crlf)| Wenn Sie aus irgendeinem Grund nicht sicher sind |
+        (crlf)| ob die Wetterdaten, die Sie eben eingegeben haben, |
+        (crlf)| auch wirklich stimmen,dann geben sie (N) ein.|
+        (crlf)| (z.b ungenaue Messung, Schaetzung, stark veraenderlich |
+        (crlf)|  und somit eine genaue Angabe nur schwer moeglich oder |
+        (crlf)|  keine Angabe)     J oder N : | )
+        (make next-rule ^rtask bestimmth-zeit ^status (accept) )
+)
+
+
+(p help-bestimmth-atts
+        (next-rule ^rtask bestimmth-atts ^time help )
+        -->
+        (remove 1 )
+        (write  (crlf)
+                (crlf)| Geben Sie die Zeit ein ,in der Sie unsichere Angaben|
+                (crlf)| gemacht haben (1,2,3) |
+                (crlf)|  wobei:|
+                (crlf)|      1= vor 5 bis 12 Stunden|
+                (crlf)|      2= vor 1/2 bis 3 Stunden |
+                (crlf)|      3= Gegenwart (wenn sie jetzt aus dem Fenster|
+                (crlf)|          schauen statt aufs Terminal )|
+                (crlf)
+        (crlf) | Geben Sie die Zeit ein:| )
+        (make next-rule ^rtask bestimmth-atts ^time (accept) )
+)
+
+
+(p help-wolkentyp
+        (frage ^attribut wolkentyp ^status g ^wert1 ? ^wert2 ? ^wert3 ? )
+        -->
+        (write (crlf) |Uebersicht: WOLKENTYPEN:| (crlf)
+        (crlf)|STRATUS:niedrige,gleichmaessige Schichtwolke (sog. Hochnebel)|
+        (crlf)| (st)   graue,strukturlose Wolkendecke.|
+        (crlf)
+        (crlf)|STRATOCUMULUS: Haufenschichtwolke.Anfaenglich entstandene|
+              | Haufenwolken|
+        (crlf)| (sc)   sind zu einer niedrigen Wolkendecke zusammengewachsen|
+        (crlf)
+        (crlf)|CUMULUS: Haufenwolke.Flache,abgerundete Quellwolke.|
+        (crlf)| (cu)|
+        (crlf)|CUMULONIMBUS: grosse,hohe,Haufenwolke evtl. Ambossform|
+        (crlf)| (cb)|
+        (crlf)|NIMBOSTRATUS: Regenschichtwolke.Dunkle,strukturlose Schicht-|
+        (crlf)| (ns)   wolken die den ganzen Himmel bedecken.|
+        (crlf)
+        (crlf)|weiter mit -return : | ) (bind <x> (acceptline) ) (write
+        (crlf)|ALTOSTRATUS: mittelhohe Schichtwolke.Gleichmaessig bleigrau.|
+        (crlf)| (as)   Ohne Struktur.Sonne noch als heller Fleck zu erkennen|
+        (crlf)
+        (crlf)|ALTOCUMULUS: mittelhohe Haufenschichtwolke.Wolkenballen |
+        (crlf)| (ac)   erscheinen wie parallele Walzen.|
+        (crlf)
+        (crlf)|CIRRUS: Federwolke.Baender oder Federform |
+        (crlf)| (ci)|
+        (crlf)|CIRROCUMULUS: hohe Schaefchenwolken.Kleine,hohe,weisse|
+        (crlf)| (cc)   Baellchen.|
+        (crlf)|CIRROSTRATUS:hohe Schleierwolke.hoher duenner Wolkenschleier.|
+
+        (crlf)| (cs)| (crlf)
+       (crlf)|Ueberlegen Sie welche dieser Beschreibungen auf die Wolken vor|
+        (crlf)|6-12,1/2-3 Stunden und in der Gegenwart am ehesten zutrifft.|
+        (crlf) )
+        (write (crlf)|Wolkentyp vor 6-12 Stunden?: | )
+        (bind <a> (accept) )
+        (write (crlf)|Wolkentyp vor 1/2-3 Stunden?: | )
+        (bind <b> (accept) )
+        (write (crlf)|Wolkentyp in der Gegenwart?: | )
+        (modify 1 ^wert1 <a> ^wert2 <b> ^wert3 (accept) )
+)
+
+(p help-ausgabe
+        (next-rule ^rtask bodere ^status help )
+        -->
+        (remove 1 )
+        (write  (crlf)
+                (crlf)| Sie koennen zwischen zwei verschiedenen Ausgabearten|
+                (crlf)| waehlen:|
+                (crlf)|     (E)rgebnis: Genaue,tabellarische Ausgabe|
+                (crlf)|                 des Ergebnisses in Zahlen,|
+                (crlf)|                 mit Angabe der Wahrscheinlichkeit|
+                (crlf)|                 des Eintreffens.|
+                (crlf)|     (B)eurteilung: Interpretation der Daten|
+                (crlf)|                 durch den Computer und Ausgabe|
+                (crlf)|                 in deutschen Saetzen . |
+                (crlf)|                 Aussagen werden nur ueber genuegend|
+                (crlf)|                 gesicherte Daten gemacht. |
+        (crlf) | Waehlen Sie: | )
+        (make next-rule ^rtask bodere ^status (accept) )
+)
+(p help-dialog
+         (next-rule ^rtask dialog ^status help )
+        -->
+         (remove 1 )
+         (write (crlf)
+                 (crlf)| Wenn Sie die zweite Ausgabeform auch noch betrachten|
+                 (crlf)| wollen geben Sie E fuer Ergebnis oder B fuer |
+                 (crlf)| Beurteilung ein.Wollen Sie aber das Programm|
+                       | verlassen, |
+                 (crlf)| so geben Sie Q ein.Wenn Sie eine Uebersicht der|
+                 (crlf)| Schlussfolgerungen des Computers wollen,druecken Sie|
+                 (crlf)| U .Mit S koennen Sie Erklaerungen ueber bestimmte|
+                 (crlf)| Wetterelemente verlangen. |
+                 (crlf)| Mit R koennen Sie das Programm vo neuen starten. |
+                 (crlf)| Mit HELP/Topic koennen sie weitere Help's abrufen, |
+                 (crlf)| mit HELP/S zB. einen Text ueber die S-Erklaerung. |
+                 (crlf)| Waehlen sie: | )
+         (make next-rule ^rtask dialog ^status (accept) )
+)
+(p help-erklaerung/u
+         (next-rule ^rtask dialog ^status help/u )
+        -->
+         (remove 1 )
+         (write (crlf)
+                 (crlf)|Wenn Sie U eingeben , gibt der Rechner eine|
+                 (crlf)|Begruendung fuer seine Prognose ab , d.h das Wissen, |
+                 (crlf)|welches ihn zu seiner Behauptung gebracht hat. |
+                 (crlf)|Sie koennen so kontrollieren ,ob die richtigen |
+                 (crlf)|Schlussfolgerungen gezogen wurden.Wenn Sie noch|
+                 (crlf)|wenig vom Wetter verstehen , koennen Sie so einiges|
+                 (crlf)|ueber die Zusammenhaenge des Wetters erfahren , |
+                 (crlf)|und so eigene Wetterprognose erstellen .| (crlf)
+        (crlf)|Waehlen Sie U/S/R/Q/E/B: | )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+(p help-erklaerung/s
+        (next-rule ^rtask dialog ^status help/s )
+        -->
+        (remove 1 )
+        (write (crlf)
+                 (crlf)| Wenn Sie S eingeben, bekommen Sie die Moeglichkeit, |
+                 (crlf)| detaillierte Fragen zur Prognose zu stellen. |
+                 (crlf)| ZB. : "Warum wird es in 1/2-3 Stunden regnen". |
+                 (crlf)| Waehlen Sie U/S/R/Q/E/B: | )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+(p help-erklaerung/q
+        (next-rule ^rtask dialog ^status help/q )
+        -->
+        (remove 1 )
+        (write (crlf)| Q fuehrt zum Stop des Programms, und zurueck zum|
+
+                 (crlf)| OPS5 Interpreter.Mit EXIT kommen sie dann wieder |
+                 (crlf)| zum DCL. |
+                 (crlf)|Waehlen Sie U/S/R/Q/E/B: | )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+(p help-erklaerung/r
+        (next-rule ^rtask dialog ^status help/r )
+        -->
+        (remove 1 )
+        (write (crlf)| R startet das Programm von neuem, sie koennen dann|
+                (crlf)| alle Daten neu eingeben, und es wird eine neue|
+                (crlf)| Prognose gemacht.|
+                (crlf)|Waehlen Sie U/S/R/Q/E/B: | )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+
+(p help-erklaerung/e/b
+        (next-rule ^rtask dialog ^status << help/e help/b >> )
+        -->
+        (remove 1 )
+        (write  (crlf)
+                (crlf)| Sie koennen zwischen zwei verschiedenen Ausgabearten|
+                (crlf)| waehlen:|
+                (crlf)|     (E)rgebnis: Genaue,tabellarische Ausgabe|
+                (crlf)|                 des Ergebnisses in Zahlen,|
+                (crlf)|                 mit Angabe der Wahrscheinlichkeit|
+                (crlf)|                 des Eintreffens.|
+                (crlf)|     (B)eurteilung: Interpretation der Daten|
+                (crlf)|                 durch den Computer und Ausgabe|
+                (crlf)|                 in deutschen Saetzen . |
+                (crlf)|                 Aussagen werden nur ueber genuegend|
+                (crlf)|                 gesicherte Daten gemacht. |
+                (crlf)|Waehlen Sie U/S/R/Q/E/B: | )
+        (make next-rule ^rtask dialog ^status (accept) )
+)
+
+(p help-intro
+        (next-rule ^rtask help2 ^status help )  ; nicht an help-group
+        -->                                     ; gebunden,da next-group's
+        (remove 1 )                             ; erst spaeter init. werden
+        (write (crlf)
+        (crlf)| VAXfrog ist ein kleines Expertensystem , welches |
+        (crlf)| versucht eine kurzfristige Wetterprognose zu erstellen.|
+        (crlf)| Um dies bewerkstelligen zu koennen braucht es Informationen|
+        (crlf)| ueber die Wetterlage zu verschiedenen Zeitpunkten.| (crlf)
+        (crlf)| VAXfrog fraegt die Wetterlage von drei Zeitpunkten ab ,|
+        (crlf)| (vor 5-12 Stunden, vor 1/2-3 stunden und Gegenwart)|
+        (crlf)| und macht dann eine Prognose auf zwei Zeitpunkte in der|
+              | Zukunft|
+        (crlf)| (Wetter in 1/2-3 und 6-12 Stunden ).| (crlf)
+        (crlf)| Die Zeitpunkte sind von 1-5 durchnummeriert.|
+        (crlf)| Eine zweite Eingabemoeglichkeit waere:|
+        (crlf)|    Eingabe:  1= vor 5-11 Stunden|
+        (crlf)|       "      2= Gegenwart|
+        (crlf)|    Prognose: 3= in 1/2-3 stunden (bei Eingabe '?' eingeben)|
+        (crlf)|       "      4= in 3-6 Stunden|
+        (crlf)|       "      5= in 7-13 Stunden|
+        (crlf)| weiter mit -return-| )
+        (bind <x> (acceptline) )
+        (make next-rule ^rtask help2 ^status nohelp )
+)
+
+
+
+
+;                * * * * RESTART * * * *
+;                *   (^gtask restart)  *
+;                * * * * * * * * * * * *
+;    (remove * )in RHS leider nicht moeglich
+
+(p wetter-wm-remove
+        (next-group ^gtask restart )
+        (wetter)
+        -->
+         (remove 2 )
+)
+(p tendenzen-wm-remove
+         (next-group ^gtask restart )
+         (tendenz)
+        -->
+         (remove 2 )
+)
+(p erklaer-wm-remove
+         (next-group ^gtask restart )
+        (erklaer)
+        -->
+        (remove 2 )
+)
+(p rcontr-wm-remove
+        (next-group ^gtask restart )
+        (rcontr)
+        -->
+        (remove 2 )
+)
+(p frage-wm-remove
+        (next-group ^gtask restart )
+        (frage )
+        -->
+        (remove 2 )
+)
+(p feuer-wm-remove
+        (next-group ^gtask restart )
+        (feuer )
+        -->
+        (remove 2 )
+)
+(p verdacht-wm-remove
+        (next-group ^gtask restart )
+        (verdacht)
+        -->
+        (remove 2 )
+)
+(p next-rule-wm-remove
+        (next-group ^gtask restart )
+        (next-rule)
+        -->
+        (remove 2 )
+)
+(p next-group-wm-remove
+        (next-group ^gtask restart )
+        (next-group ^gtask { <> restart <> restart2 } )
+        -->
+        (remove 2 )
+)
+(p final-wm-remove
+        (next-group ^gtask restart2 )
+        (next-group ^gtask restart )
+        -->
+        (remove 1 2 )
+        (make start )
+)
+
+
+
+;* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+;*                                                                   *
+;*                              FIN                                  *
+;*                                                                   *
+;* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *

@@ -1,0 +1,159 @@
+WARNING: redefining OPS::ARI in DEFUN
+Resetting OPS5 interpreter: 
+   deleting productions, working memory, etc.
+Common Lisp OPS5 interpreter, version 19-OCT-92.
+
+;; 177 top-level forms loaded
+
+
+ v       v    a     x      x                      
+  v     v    a a     x    x    ff                 
+  v     v    a a      x  x    f  f                
+   v   v    a   a      xx     f                   
+   v   v    aaaaa      xx    fff  r rr  oo   gg   
+    v v    a     a    x  x    f   rr   o  o g  g  
+    v v    a     a   x    x   f   r    o  o g  g  
+     v    a       a x      x  f   r     oo   ggg  
+                                               g  
+                                            g  g  
+                                             gg   
+
+
+     Expertensystem fuer die Wettervorhersage 
+
+M.lard. 86 (C)DIGITAL 
+Weiter mit -return-  : 
+
+
+ VAXfrog ist ein kleines Expertensystem , welches  
+ versucht eine kurzfristige Wetterprognose zu erstellen. 
+ Um dies bewerkstelligen zu koennen braucht es Informationen 
+ ueber die Wetterlage zu verschiedenen Zeitpunkten. 
+
+ VAXfrog fraegt die Wetterlage von drei Zeitpunkten ab , 
+ (vor 5-12 Stunden, vor 1/2-3 stunden und Gegenwart) 
+ und macht dann eine Prognose auf zwei Zeitpunkte in der  Zukunft 
+ (Wetter in 1/2-3 und 6-12 Stunden ). 
+
+ Die Zeitpunkte sind von 1-5 durchnummeriert. 
+ Eine zweite Eingabemoeglichkeit waere: 
+    Eingabe:  1= vor 5-11 Stunden 
+       "      2= Gegenwart 
+    Prognose: 3= in 1/2-3 stunden (bei Eingabe '?' eingeben) 
+       "      4= in 3-6 Stunden 
+       "      5= in 7-13 Stunden 
+ weiter mit -return- 
+
+
+Geben Sie bitte auf jede der folgenden Fragen drei 
+Werte ein .Den ersten fuer die Wetterlage vor 6-12 
+Stunden,den zweiten fuer die Wetterlage vor 
+1/2-3 St. ,den letzten fuer die Gegenwart.  
+
+Wenn Sie ueberhaupt nicht wissen was Sie eingeben 
+sollen dann geben Sie ein '?'ein. 
+
+Hat es Regen? Menge? (1-50,0=keinen 50=in Stroemen): 0 0 5
+
+Dominierender Wolkentyp? (st,sc,cu,cb,ns,as,ac,ci,cc,cs,(k)eine) ci as ns
+
+Wolkendichte? (1-6 ,0=wolkenlos 3=halb- 6=ganz bedeckt): 2 3 5
+
+Lufttemperatur ? (Celsius,-50 bis 50 ):  24 23 21
+
+Hat es Nebel ? Menge? (0-50, 0=keinen 10=Morgennebel 40=suppe) 0 0 0
+
+Geben sie die Luftfeuchtigkeit ein (in %) :  60 70 80
+
+Geben sie die Windstaerke ein (Beaufort-skala, 1-12) : 2 3 4
+
+Geben sie die Windrichtung ein (0=N,90=O,180=S,270=W):  200 230 250
+
+Jahreszeit? (ein Wert:W,S oder FH fuer Fruehl. & Herbst):  s
+
+Geben sie den Luftdruck in Milibar (950-1050) ein:  1012 1008 1003
+
+Danke.     Auswertung. . . . 
+Sind alle Angaben absolut sicher?J,N (oder HELP) : 
+j
+
+
+
+1 . Rulenr: 52 text:  LUFTDRUCK-FALLEND 
+War das nur Morgennebel vor 0 Stunden ? J/N :  n
+
+2 . Rulenr: 31 text:  NACHFRAGE-MORGENNEBEL 
+3 . Rulenr: 20 text:  STARK-FALLENDER-LUFTDRUCK 
+4 . Rulenr: 23 text:  ZUNAHME-DER-WOLKENDICHTE 
+5 . Rulenr: 13 text:  NIMBOSTRATUS->REGEN,BOEEN 
+6 . Rulenr: 35 text:  LUFTFEUCHTIGKEIT-BERECHNEN 
+Der Denkprozess ist beendet. 
+
+Wuenschen Sie eine allgemeine Beurteilung(sofern moeglich), 
+oder eine genaue Ausgabe der Ergebnisse ? 
+Geben Sie 'B' oder 'E' ein (oder HELP) :  b
+
+Die Windstaerke in 1/2-3 Stunden wird ca. 
+6 Beaufort betragen.(Richtung 250 ) 
+Moeglicherweise wird es in 1/2-3 Stunden  regnen.( Sorry,Regenschirm einpacken). 
+Die uebrigen Wetterdaten werden sich nicht  veraendern. 
+
+Waehlen Sie:  
+(Q)uit   (B)eurteilung   (E)rgebnis,tabellarisch (HELP)=hilfe 
+(U)ebersichtliche Erklaerung  (S)petzielle Erklaerung 
+(R)estart :  u
+
+Schlussfolgerung von Regel Nr. 35 
+Luftfeuchtigkeit berechnet aus Temp. und absoluter Feuchtigkeit. 
+Schlussfolgerung von Regel Nr. 13 
+Nimbostratus: bald Regen,Wind,Kuehle,Luftdruck faellt. 
+Schlussfolgerung von Regel Nr. 23 
+Wolkendichte nimmt stark zu: TD-Einfluss,mehr Wolken in 1-3h. 
+Schlussfolgerung von Regel Nr. 20 
+Luftdruck faellt mehr als 1mb/h=Sturm,weiterer Druckfall,Regen. 
+Schlussfolgerung von Regel Nr. 31 
+Nur Morgennebel verkuendet weniger Niederschlaege. 
+Schlussfolgerung von Regel Nr. 52 
+Luftdruck faellt, tieferer Luftdruck in 6-12H. 
+
+Waehlen Sie:  
+(Q)uit   (B)eurteilung   (E)rgebnis,tabellarisch (HELP)=hilfe 
+(U)ebersichtliche Erklaerung  (S)petzielle Erklaerung 
+(R)estart :  e
+
+Aussage von 6 Regeln: 
+
+Wetterdaten in 30-180 Minuten : 
+
+Luftdruck:   1001            Windrichtung:     250 
+Windstaerke: 6               Luftfeuchtigkeit: 80 
+Morgentau:   ?               Nebel:            0 
+Temperatur:  19              Wolkendichte:     5 
+Wolkentyp:   NS              Regen:            34 
+
+Diese Vorhersage wird mit 74 %-iger  Sicherheit eintreffen.  
+
+Wetterdaten in 6-12 Stunden : 
+
+Luftdruck:   994             Windrichtung:     250 
+Windstaerke: 4               Luftfeuchtigkeit: 80 
+Morgentau:   ?               Nebel:            0 
+Temperatur:  21              Wolkendichte:     5 
+Wolkentyp:   NS              Regen:            5 
+
+Diese Vorhersage wird mit 31 %-iger  Sicherheit eintreffen.  
+
+Wollen Sie die Gegenwart nochmals anschauen ? J,N :  n
+
+
+Waehlen Sie:  
+(Q)uit   (B)eurteilung   (E)rgebnis,tabellarisch (HELP)=hilfe 
+(U)ebersichtliche Erklaerung  (S)petzielle Erklaerung 
+(R)estart :  q
+
+end -- explicit halt
+165 productions (1527 // 2596 nodes)
+ 53 firings (381 rhs actions)
+257 mean working memory size (279 maximum)
+  5 mean conflict set size (15 maximum)
+472 mean token memory size (548 maximum)
